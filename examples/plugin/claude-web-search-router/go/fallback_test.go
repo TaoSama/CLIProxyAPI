@@ -128,6 +128,63 @@ func TestRouteWithFallbackExhausted(t *testing.T) {
 	}
 }
 
+func TestRouteOpenAIResponsesWebSearchToCodex(t *testing.T) {
+	currentConfig.Store(pluginConfig{
+		Enabled:    true,
+		Route:      string(backendFallback),
+		CodexModel: "gpt-5.6-sol",
+		OnlyModels: []string{"model_hub/*"},
+	})
+	body := []byte(`{
+		"model":"claude-opus-4-8",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"search the web"}]}],
+		"tools":[
+			{"type":"function","name":"shell","parameters":{"type":"object"}},
+			{"type":"web_search"}
+		]
+	}`)
+	raw, err := routeModel(mustJSON(t, rpcModelRouteRequest{
+		ModelRouteRequest: pluginapi.ModelRouteRequest{
+			SourceFormat:       "openai-response",
+			Body:               body,
+			RequestedModel:     "claude-opus-4-8",
+			UpstreamModels:     []string{"model_hub/es1_orange_o48"},
+			AvailableProviders: []string{"claude", "codex"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := decodeModelRouteResponse(t, raw)
+	if !resp.Handled || resp.TargetKind != pluginapi.ModelRouteTargetProvider || resp.Target != "codex" || resp.TargetModel != "gpt-5.6-sol" {
+		t.Fatalf("resp = %#v", resp)
+	}
+}
+
+func TestRouteOpenAIResponsesNativeUpstreamPassesThrough(t *testing.T) {
+	currentConfig.Store(pluginConfig{
+		Enabled:    true,
+		Route:      string(backendFallback),
+		OnlyModels: []string{"model_hub/*"},
+	})
+	raw, err := routeModel(mustJSON(t, rpcModelRouteRequest{
+		ModelRouteRequest: pluginapi.ModelRouteRequest{
+			SourceFormat:       "openai-response",
+			Body:               []byte(`{"tools":[{"type":"web_search"}]}`),
+			RequestedModel:     "gpt-5.6-sol",
+			UpstreamModels:     []string{"gpt-5.6-sol"},
+			AvailableProviders: []string{"codex"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := decodeModelRouteResponse(t, raw)
+	if resp.Handled {
+		t.Fatalf("expected native upstream pass-through, got %#v", resp)
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(v)
