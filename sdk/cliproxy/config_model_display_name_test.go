@@ -106,3 +106,22 @@ func TestBuildConfigModelsDisplayNameFallback(t *testing.T) {
 		t.Fatalf("DisplayName = %q, want upstream model name", model.DisplayName)
 	}
 }
+
+func TestBuildClaudeConfigModelsPreservesThinkingMetadataThroughAlias(t *testing.T) {
+	model := buildClaudeConfigModels(&config.ClaudeKey{Models: []config.ClaudeModel{{
+		Name: "model_hub/es1_orange_o48", Alias: "claude-opus-4-8",
+	}}})[0]
+	if model.Thinking == nil {
+		t.Fatal("Thinking = nil, want alias model metadata")
+	}
+	want := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	if got := model.Thinking.Levels; len(got) != len(want) {
+		t.Fatalf("Thinking.Levels = %v, want %v", got, want)
+	} else {
+		for index := range want {
+			if got[index] != want[index] {
+				t.Fatalf("Thinking.Levels = %v, want %v", got, want)
+			}
+		}
+	}
+}
