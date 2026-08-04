@@ -782,12 +782,43 @@ func buildConfigModels[T modelEntry](models []T, ownedBy, modelType string) []*M
 			continue
 		}
 		seen[key] = struct{}{}
-		if resolved := modelconfig.ResolveModelInfo(name, modelType, model.GetThinking()); resolved.Thinking != nil {
+		resolved := modelconfig.ResolveModelInfo(name, modelType, model.GetThinking())
+		if resolved.Thinking == nil && alias != "" {
+			resolved = modelconfig.ResolveModelInfo(alias, modelType, nil)
+		}
+		if resolved.Thinking != nil {
 			info.Thinking = resolved.Thinking
 		}
+		addClaudeOpusUltraCompatibility(info, alias, modelType)
 		out = append(out, info)
 	}
 	return out
+}
+
+func addClaudeOpusUltraCompatibility(info *ModelInfo, alias, modelType string) {
+	if info == nil || info.Thinking == nil || !strings.EqualFold(modelType, "claude") {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(alias)) {
+	case "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5":
+	default:
+		return
+	}
+	hasMax := false
+	for _, level := range info.Thinking.Levels {
+		if strings.EqualFold(strings.TrimSpace(level), "ultra") {
+			return
+		}
+		if strings.EqualFold(strings.TrimSpace(level), "max") {
+			hasMax = true
+		}
+	}
+	if !hasMax {
+		return
+	}
+	thinking := *info.Thinking
+	thinking.Levels = append(append([]string(nil), info.Thinking.Levels...), "ultra")
+	info.Thinking = &thinking
 }
 
 func buildVertexCompatConfigModels(entry *config.VertexCompatKey) []*ModelInfo {
