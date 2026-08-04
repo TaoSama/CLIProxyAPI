@@ -1,11 +1,11 @@
 # Claude Code Web Search Router (ModelRouter example)
 
-This plugin demonstrates **ModelRouter** on Claude Code built-in `web_search` requests (see `temp/1.json` in the repo root for a captured request/response).
+This plugin routes built-in `web_search` requests away from upstream models that do not support server-side search.
 
 ## What it detects
 
-- Inbound protocol `claude` / `anthropic`
-- `tools[]` with `type` `web_search_20250305` or `web_search_20260209`
+- Inbound `claude` / `anthropic` with `tools[].type` `web_search_20250305` or `web_search_20260209`
+- Inbound `openai-response` with `tools[].type` `web_search` or `web_search_preview`; these requests route directly to the configured Codex web-search model so the Responses protocol is preserved
 - Optional Claude Code heuristics: system text like “web search tool use”, or user text
   `Perform a web search for the query: …`
 
@@ -13,7 +13,7 @@ This plugin demonstrates **ModelRouter** on Claude Code built-in `web_search` re
 
 | Value                    | Behavior                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fallback` (**default**) | Plugin **executor** runs **antigravity → codex → xai → tavily** (built-ins via `host.model.*`, Tavily in-plugin). On **429/503/502**, tries the next backend in the same request. Backends that fail often are **deprioritized on later requests** (in-memory penalty; no extra config). |
+| `fallback` (**default**) | Claude Messages requests use the plugin executor's **Tavily → Codex** fallback. OpenAI Responses requests route directly to the configured Codex web-search model. |
 | `antigravity_google` / `codex_web_search` / `xai_web_search` / `tavily` | Same orchestration for that backend’s chain member(s): execution retry + penalty apply when multiple backends are eligible. |
 | `default_provider`             | `default_provider` + optional `default_provider_model` via built-in AuthManager (not orchestrated).                                                                                                                                                                                                                          |
 Routing for `fallback` requires at least one runnable backend (providers in `AvailableProviders` where needed, resolvable antigravity model, or `tavily_api_keys`).
@@ -32,7 +32,7 @@ Plugin config lives under `plugins.configs.claude-web-search-router` (key must m
 
 ### Recommended: fallback chain (default)
 
-Tries **antigravity → codex → xai → tavily**; configure `tavily_api_keys` so the last step can succeed when built-in providers are missing or unavailable.
+Claude Messages requests try **Tavily → Codex**. OpenAI Responses requests use Codex directly to preserve the native response format.
 
 ```yaml
 plugins:
@@ -165,6 +165,7 @@ plugins:
 | `default_provider` / `default_provider_model` | Used when `route=default_provider` |
 | `tavily_api_keys` | Required for `route=tavily` or fallback last step |
 | `require_web_search_only` | `true` matches Claude Code–style exclusive `web_search` tools |
+| `only_models` | Optional exact names or trailing-`*` prefixes matched against host-resolved upstream model names |
 
 ## Build
 

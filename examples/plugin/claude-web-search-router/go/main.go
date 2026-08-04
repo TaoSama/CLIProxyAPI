@@ -109,6 +109,10 @@ type pluginConfig struct {
 	DefaultProviderModel string   `yaml:"default_provider_model"`
 	TavilyAPIKeys        []string `yaml:"tavily_api_keys"`
 	RequireWebSearchOnly bool     `yaml:"require_web_search_only"`
+	// OnlyModels, when non-empty, restricts interception to requests whose
+	// host-resolved upstream model matches one of the listed patterns.
+	// Patterns support a trailing "*" wildcard (e.g. "model_hub/*").
+	OnlyModels []string `yaml:"only_models"`
 }
 
 type registration struct {
@@ -276,6 +280,7 @@ func pluginRegistration() registration {
 				{Name: "default_provider_model", Type: pluginapi.ConfigFieldTypeString, Description: "Optional execution model on default_provider route."},
 				{Name: "tavily_api_keys", Type: pluginapi.ConfigFieldTypeArray, Description: "Tavily API keys (round-robin) when route=tavily."},
 				{Name: "require_web_search_only", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Require tools to be exclusively typed web_search (matches antigravity-only path)."},
+				{Name: "only_models", Type: pluginapi.ConfigFieldTypeArray, Description: "Intercept only host-resolved upstream models matching these exact names or trailing-* prefixes."},
 			},
 		},
 		Capabilities: registrationCapability{
@@ -297,11 +302,15 @@ func routeModel(raw []byte) ([]byte, error) {
 	if !cfg.Enabled {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
 	}
-	if !isClaudeSourceFormat(req.SourceFormat) {
+	if !isSupportedWebSearchRequest(req.SourceFormat, req.Body, cfg.RequireWebSearchOnly) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
 	}
-	if !isClaudeCodeBuiltinWebSearchRequest(req.Body, cfg.RequireWebSearchOnly) {
+	// Non-matching upstream models pass through to their native provider.
+	if !modelMatchesOnly(req.UpstreamModels, req.RequestedModel, cfg.OnlyModels) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
+	}
+	if isOpenAIResponsesSourceFormat(req.SourceFormat) {
+		return okEnvelope(routeOpenAIResponsesWebSearch(cfg, req.ModelRouteRequest))
 	}
 	route := strings.TrimSpace(cfg.Route)
 	if isFallbackRoute(route) {

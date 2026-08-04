@@ -7,12 +7,12 @@ import (
 )
 
 // defaultWebSearchFallbackChain is the ordered backend try list when route=fallback.
+// Prefer Tavily for predictable, low-cost agent search, then fall back to Codex
+// server-side web_search if Tavily is unavailable or returns a retryable error.
 func defaultWebSearchFallbackChain() []routeBackend {
 	return []routeBackend{
-		backendAntigravityGoogle,
-		backendCodexWebSearch,
-		backendXAIWebSearch,
 		backendTavily,
+		backendCodexWebSearch,
 	}
 }
 
@@ -92,6 +92,30 @@ func tryRouteBackend(backend routeBackend, cfg pluginConfig, req pluginapi.Model
 
 func routeWithFallback(cfg pluginConfig, req pluginapi.ModelRouteRequest) pluginapi.ModelRouteResponse {
 	return routeWithExecutionOrchestration(cfg, req, string(backendFallback))
+}
+
+func routeOpenAIResponsesWebSearch(cfg pluginConfig, req pluginapi.ModelRouteRequest) pluginapi.ModelRouteResponse {
+	route := strings.TrimSpace(cfg.Route)
+	if isFallbackRoute(route) {
+		resp, ok := tryRouteBackend(backendCodexWebSearch, cfg, req)
+		if ok {
+			return resp
+		}
+		return pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_web_search_codex_unavailable"}
+	}
+
+	backend := routeBackend(route)
+	if backend == backendTavily {
+		return pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_web_search_tavily_unsupported"}
+	}
+	resp, ok := tryRouteBackend(backend, cfg, req)
+	if ok {
+		return resp
+	}
+	if strings.TrimSpace(resp.Reason) != "" {
+		return resp
+	}
+	return pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_web_search_backend_unavailable"}
 }
 
 func routeWithExecutionOrchestration(cfg pluginConfig, req pluginapi.ModelRouteRequest, route string) pluginapi.ModelRouteResponse {

@@ -533,6 +533,10 @@ type ModelRouteRequest struct {
 	SourceFormat string
 	// RequestedModel is the client-requested model before provider/auth selection.
 	RequestedModel string
+	// UpstreamModels contains the host-resolved upstream model candidates for the
+	// requested model. The list may contain multiple entries when more than one
+	// auth/provider mapping can serve the same client-facing alias.
+	UpstreamModels []string
 	// Stream reports whether the request expects streaming output.
 	Stream bool
 	// Headers contains inbound request headers.
