@@ -128,6 +128,127 @@ func TestRouteWithFallbackExhausted(t *testing.T) {
 	}
 }
 
+func TestRouteOpenAIResponsesWebSearchSelfOrchestrates(t *testing.T) {
+	currentConfig.Store(pluginConfig{
+		Enabled:    true,
+		Route:      string(backendFallback),
+		CodexModel: "gpt-5.6-sol",
+		OnlyModels: []string{"model_hub/*"},
+	})
+	body := []byte(`{
+		"model":"claude-opus-4-8",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"search the web"}]}],
+		"tools":[
+			{"type":"function","name":"shell","parameters":{"type":"object"}},
+			{"type":"web_search"}
+		]
+	}`)
+	raw, err := routeModel(mustJSON(t, rpcModelRouteRequest{
+		ModelRouteRequest: pluginapi.ModelRouteRequest{
+			SourceFormat:       "openai-response",
+			Body:               body,
+			RequestedModel:     "claude-opus-4-8",
+			UpstreamModels:     []string{"model_hub/es1_orange_o48"},
+			AvailableProviders: []string{"claude", "codex"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := decodeModelRouteResponse(t, raw)
+	if !resp.Handled || resp.TargetKind != pluginapi.ModelRouteTargetSelf || resp.Reason != "responses_web_search_orchestrated" {
+		t.Fatalf("resp = %#v", resp)
+	}
+}
+
+func TestRouteOpenAIResponsesSelfWithoutCodexProvider(t *testing.T) {
+	currentConfig.Store(pluginConfig{
+		Enabled:    true,
+		Route:      string(backendFallback),
+		OnlyModels: []string{"model_hub/*"},
+	})
+	body := []byte(`{
+		"model":"traex/gpt-5.6",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"latest news"}]}],
+		"tools":[{"type":"web_search"}]
+	}`)
+	raw, err := routeModel(mustJSON(t, rpcModelRouteRequest{
+		ModelRouteRequest: pluginapi.ModelRouteRequest{
+			SourceFormat:       "openai-response",
+			Body:               body,
+			RequestedModel:     "traex/gpt-5.6",
+			UpstreamModels:     []string{"model_hub/es1_orange_o48"},
+			AvailableProviders: []string{"claude"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := decodeModelRouteResponse(t, raw)
+	if !resp.Handled || resp.TargetKind != pluginapi.ModelRouteTargetSelf {
+		t.Fatalf("resp = %#v", resp)
+	}
+}
+
+func TestRouteOpenAIResponsesMultiToolIntercepted(t *testing.T) {
+	// require_web_search_only=true must still intercept a Codex multi-tool turn,
+	// because the openai-response path relaxes the exclusive-web_search gate.
+	currentConfig.Store(pluginConfig{
+		Enabled:              true,
+		Route:                string(backendFallback),
+		RequireWebSearchOnly: true,
+		OnlyModels:           []string{"model_hub/*"},
+	})
+	body := []byte(`{
+		"model":"claude-opus-4-8",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"q"}]}],
+		"tools":[
+			{"type":"function","name":"exec","parameters":{"type":"object"}},
+			{"type":"web_search"}
+		]
+	}`)
+	raw, err := routeModel(mustJSON(t, rpcModelRouteRequest{
+		ModelRouteRequest: pluginapi.ModelRouteRequest{
+			SourceFormat:       "openai-response",
+			Body:               body,
+			RequestedModel:     "claude-opus-4-8",
+			UpstreamModels:     []string{"model_hub/es1_orange_o48"},
+			AvailableProviders: []string{"claude"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := decodeModelRouteResponse(t, raw)
+	if !resp.Handled || resp.TargetKind != pluginapi.ModelRouteTargetSelf {
+		t.Fatalf("resp = %#v", resp)
+	}
+}
+
+func TestRouteOpenAIResponsesNativeUpstreamPassesThrough(t *testing.T) {
+	currentConfig.Store(pluginConfig{
+		Enabled:    true,
+		Route:      string(backendFallback),
+		OnlyModels: []string{"model_hub/*"},
+	})
+	raw, err := routeModel(mustJSON(t, rpcModelRouteRequest{
+		ModelRouteRequest: pluginapi.ModelRouteRequest{
+			SourceFormat:       "openai-response",
+			Body:               []byte(`{"tools":[{"type":"web_search"}]}`),
+			RequestedModel:     "gpt-5.6-sol",
+			UpstreamModels:     []string{"gpt-5.6-sol"},
+			AvailableProviders: []string{"codex"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := decodeModelRouteResponse(t, raw)
+	if resp.Handled {
+		t.Fatalf("expected native upstream pass-through, got %#v", resp)
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(v)

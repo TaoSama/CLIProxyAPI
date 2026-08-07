@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +155,58 @@ func resolveOpenAICompatUpstreamModelPool(cfg *internalconfig.Config, auth *Auth
 		return nil
 	}
 	return resolveModelAliasPoolFromConfigModels(requestedModel, asModelAliasEntries(entry.Models))
+}
+
+// ResolveUpstreamModelCandidates returns the upstream model names that the
+// current auth configuration can resolve from a client-facing model name.
+// It is side-effect free: model-pool rotation and auth selection are not
+// advanced by this inspection.
+func (m *Manager) ResolveUpstreamModelCandidates(requestedModel string) []string {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if m == nil || requestedModel == "" {
+		return nil
+	}
+
+	candidates := make(map[string]string)
+	for _, auth := range m.snapshotAuths() {
+		if auth == nil || auth.Disabled || auth.Status == StatusDisabled {
+			continue
+		}
+		resolvedModel := rewriteModelForAuth(requestedModel, auth)
+		resolvedModel = m.applyOAuthModelAlias(auth, resolvedModel)
+		if pool := m.resolveOpenAICompatUpstreamModelPool(auth, resolvedModel); len(pool) > 0 {
+			for _, model := range pool {
+				addResolvedModelCandidate(candidates, model)
+			}
+			continue
+		}
+		addResolvedModelCandidate(candidates, m.applyAPIKeyModelAlias(auth, resolvedModel))
+	}
+	if len(candidates) == 0 {
+		addResolvedModelCandidate(candidates, requestedModel)
+	}
+
+	keys := make([]string, 0, len(candidates))
+	for key := range candidates {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	models := make([]string, 0, len(keys))
+	for _, key := range keys {
+		models = append(models, candidates[key])
+	}
+	return models
+}
+
+func addResolvedModelCandidate(candidates map[string]string, model string) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	key := strings.ToLower(model)
+	if _, exists := candidates[key]; !exists {
+		candidates[key] = model
+	}
 }
 
 func preserveRequestedModelSuffix(requestedModel, resolved string) string {

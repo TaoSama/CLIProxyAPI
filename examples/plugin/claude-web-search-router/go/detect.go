@@ -9,6 +9,8 @@ import (
 const (
 	claudeWebSearchToolTypeA = "web_search_20250305"
 	claudeWebSearchToolTypeB = "web_search_20260209"
+	openAIWebSearchToolType  = "web_search"
+	openAIWebSearchPreview   = "web_search_preview"
 )
 
 // isClaudeSourceFormat reports whether the inbound protocol is Claude / Anthropic Messages.
@@ -19,6 +21,10 @@ func isClaudeSourceFormat(source string) bool {
 	default:
 		return false
 	}
+}
+
+func isOpenAIResponsesSourceFormat(source string) bool {
+	return strings.EqualFold(strings.TrimSpace(source), "openai-response")
 }
 
 func isClaudeTypedWebSearchToolType(toolType string) bool {
@@ -54,6 +60,39 @@ func hasOnlyClaudeTypedWebSearchTools(body []byte) bool {
 		}
 	}
 	return hasWebSearch
+}
+
+func isOpenAIResponsesWebSearchToolType(toolType string) bool {
+	return toolType == openAIWebSearchToolType || toolType == openAIWebSearchPreview
+}
+
+func isOpenAIResponsesWebSearchRequest(body []byte, requireWebSearchOnly bool) bool {
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.IsArray() {
+		return false
+	}
+	hasWebSearch := false
+	for _, tool := range tools.Array() {
+		toolType := tool.Get("type").String()
+		if isOpenAIResponsesWebSearchToolType(toolType) {
+			hasWebSearch = true
+			continue
+		}
+		if requireWebSearchOnly && toolType != "" {
+			return false
+		}
+	}
+	return hasWebSearch
+}
+
+func isSupportedWebSearchRequest(source string, body []byte, requireWebSearchOnly bool) bool {
+	if isClaudeSourceFormat(source) {
+		return isClaudeCodeBuiltinWebSearchRequest(body, requireWebSearchOnly)
+	}
+	if isOpenAIResponsesSourceFormat(source) {
+		return isOpenAIResponsesWebSearchRequest(body, requireWebSearchOnly)
+	}
+	return false
 }
 
 func looksLikeClaudeCodeWebSearchAssistant(body []byte) bool {
@@ -97,6 +136,43 @@ func isClaudeCodeBuiltinWebSearchRequest(body []byte, requireWebSearchOnly bool)
 		return false
 	}
 	return looksLikeClaudeCodeWebSearchAssistant(body) || hasOnlyClaudeTypedWebSearchTools(body)
+}
+
+// modelMatchesOnly reports whether any host-resolved upstream model matches one
+// of the onlyModels patterns. An empty patterns list matches everything. Each
+// pattern supports a trailing "*" wildcard and matching is case-insensitive.
+// requestedModel is used only for compatibility with hosts that do not yet
+// populate upstreamModels.
+func modelMatchesOnly(upstreamModels []string, requestedModel string, onlyModels []string) bool {
+	if len(onlyModels) == 0 {
+		return true
+	}
+	models := upstreamModels
+	if len(models) == 0 {
+		models = []string{requestedModel}
+	}
+	for _, model := range models {
+		model = strings.ToLower(strings.TrimSpace(model))
+		if model == "" {
+			continue
+		}
+		for _, pattern := range onlyModels {
+			p := strings.ToLower(strings.TrimSpace(pattern))
+			if p == "" {
+				continue
+			}
+			if strings.HasSuffix(p, "*") {
+				if strings.HasPrefix(model, strings.TrimSuffix(p, "*")) {
+					return true
+				}
+				continue
+			}
+			if model == p {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func extractClaudeWebSearchQuery(body []byte) string {

@@ -334,6 +334,7 @@ func (h *BaseAPIHandler) applyModelRouter(ctx context.Context, handlerType, mode
 	resp, ok := routeModel(ctx, host, pluginapi.ModelRouteRequest{
 		SourceFormat:   handlerType,
 		RequestedModel: modelName,
+		UpstreamModels: h.upstreamModelCandidates(modelName),
 		Stream:         stream,
 		Headers:        modelExecutionHeaders(ctx, execOptions.Headers),
 		Query:          modelExecutionQuery(ctx, execOptions.Query),
@@ -351,4 +352,11 @@ func (h *BaseAPIHandler) applyModelRouter(ctx context.Context, handlerType, mode
 		decision.Model = strings.TrimSpace(resp.TargetModel)
 	}
 	return decision
+}
+
+func (h *BaseAPIHandler) upstreamModelCandidates(modelName string) []string {
+	if h == nil || h.AuthManager == nil {
+		return nil
+	}
+	return h.AuthManager.ResolveUpstreamModelCandidates(modelName)
 }

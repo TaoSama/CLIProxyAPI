@@ -35,6 +35,26 @@ func TestDetectClaudeCodeWebSearchFromFixture(t *testing.T) {
 	}
 }
 
+// TestOpenAIResponsesWebSearchDetection locks the exclusive-gate relaxation the
+// router applies for the openai-response path (Codex attaches web_search to
+// multi-tool reasoning turns).
+func TestOpenAIResponsesWebSearchDetection(t *testing.T) {
+	multiTool := []byte(`{"tools":[{"type":"function","name":"exec"},{"type":"web_search"}]}`)
+	if isOpenAIResponsesWebSearchRequest(multiTool, true) {
+		t.Fatal("multi-tool turn should not match with require_web_search_only=true")
+	}
+	if !isOpenAIResponsesWebSearchRequest(multiTool, false) {
+		t.Fatal("multi-tool turn should match when the exclusive gate is relaxed")
+	}
+	if !isSupportedWebSearchRequest("openai-response", multiTool, false) {
+		t.Fatal("isSupportedWebSearchRequest should accept relaxed openai-response web_search")
+	}
+	noSearch := []byte(`{"tools":[{"type":"function","name":"exec"}]}`)
+	if isOpenAIResponsesWebSearchRequest(noSearch, false) {
+		t.Fatal("turn without web_search must not match")
+	}
+}
+
 func extractHTTPJSONBody(raw []byte) []byte {
 	text := string(raw)
 	idx := 0
