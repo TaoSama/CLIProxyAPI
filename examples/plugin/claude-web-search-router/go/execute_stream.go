@@ -19,7 +19,17 @@ func executeStream(raw []byte) ([]byte, error) {
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
 		return nil, errUnmarshal
 	}
-	return startExecutorStream(req, runWebSearchStreamOrchestration, closePluginStream)
+	return startExecutorStream(req, runWebSearchStreamDispatch, closePluginStream)
+}
+
+// runWebSearchStreamDispatch selects the streaming orchestration by inbound
+// protocol: OpenAI Responses turns run the client's own model with function-tool
+// web_search orchestration, while Claude turns keep the existing backend fallback.
+func runWebSearchStreamDispatch(ctx context.Context, exec pluginapi.ExecutorRequest, hostCallbackID, pluginStreamID string) error {
+	if isOpenAIResponsesSourceFormat(exec.SourceFormat) {
+		return runOpenAIResponsesOrchestrationStream(ctx, exec, hostCallbackID, pluginStreamID)
+	}
+	return runWebSearchStreamOrchestration(ctx, exec, hostCallbackID, pluginStreamID)
 }
 
 func startExecutorStream(req rpcExecutorRequest, runner streamOrchestrationRunner, closeStream pluginStreamCloser) ([]byte, error) {

@@ -7,12 +7,12 @@ import (
 )
 
 // defaultWebSearchFallbackChain is the ordered backend try list when route=fallback.
+// Prefer Tavily for predictable, low-cost agent search, then fall back to Codex
+// server-side web_search if Tavily is unavailable or returns a retryable error.
 func defaultWebSearchFallbackChain() []routeBackend {
 	return []routeBackend{
-		backendAntigravityGoogle,
-		backendCodexWebSearch,
-		backendXAIWebSearch,
 		backendTavily,
+		backendCodexWebSearch,
 	}
 }
 
@@ -92,6 +92,19 @@ func tryRouteBackend(backend routeBackend, cfg pluginConfig, req pluginapi.Model
 
 func routeWithFallback(cfg pluginConfig, req pluginapi.ModelRouteRequest) pluginapi.ModelRouteResponse {
 	return routeWithExecutionOrchestration(cfg, req, string(backendFallback))
+}
+
+// routeOpenAIResponsesWebSearch self-orchestrates OpenAI Responses (Codex) turns
+// that carry a web_search tool. Instead of switching the whole reasoning turn to a
+// different provider (which loses the client's own model), the plugin runs the
+// client's model itself and executes only the actual search action against a search
+// backend when the model calls it. See responses_orchestration.go.
+func routeOpenAIResponsesWebSearch(_ pluginConfig, _ pluginapi.ModelRouteRequest) pluginapi.ModelRouteResponse {
+	return pluginapi.ModelRouteResponse{
+		Handled:    true,
+		TargetKind: pluginapi.ModelRouteTargetSelf,
+		Reason:     "responses_web_search_orchestrated",
+	}
 }
 
 func routeWithExecutionOrchestration(cfg pluginConfig, req pluginapi.ModelRouteRequest, route string) pluginapi.ModelRouteResponse {

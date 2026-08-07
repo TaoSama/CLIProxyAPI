@@ -57,6 +57,9 @@ const (
 	// LevelMax sets maximum thinking effort.
 	// This is currently used by Claude 4.6 adaptive thinking (opus supports "max").
 	LevelMax ThinkingLevel = "max"
+	// LevelUltra is a client-facing tier above max. Providers without a native
+	// ultra tier may explicitly map it to their highest supported effort.
+	LevelUltra ThinkingLevel = "ultra"
 )
 
 // ThinkingConfig represents a unified thinking configuration.

@@ -66,6 +66,35 @@ func TestLookupAPIKeyUpstreamModel(t *testing.T) {
 	}
 }
 
+func TestResolveUpstreamModelCandidates(t *testing.T) {
+	mgr := NewManager(nil, nil, nil)
+	mgr.SetConfig(&internalconfig.Config{
+		ClaudeKey: []internalconfig.ClaudeKey{
+			{
+				APIKey: "super-relay-key",
+				Models: []internalconfig.ClaudeModel{
+					{Name: "model_hub/es1_orange_o48", Alias: "claude-opus-4-8"},
+				},
+			},
+		},
+	})
+	_, err := mgr.Register(context.Background(), &Auth{
+		ID:       "super-relay-auth",
+		Provider: "claude",
+		Attributes: map[string]string{
+			"api_key": "super-relay-key",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	got := mgr.ResolveUpstreamModelCandidates("claude-opus-4-8")
+	if len(got) != 1 || got[0] != "model_hub/es1_orange_o48" {
+		t.Fatalf("ResolveUpstreamModelCandidates() = %#v, want model_hub upstream", got)
+	}
+}
+
 func TestLookupAPIKeyUpstreamModel_InteractionsKey(t *testing.T) {
 	cfg := &internalconfig.Config{
 		InteractionsKey: []internalconfig.GeminiKey{{

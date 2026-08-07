@@ -109,6 +109,10 @@ type pluginConfig struct {
 	DefaultProviderModel string   `yaml:"default_provider_model"`
 	TavilyAPIKeys        []string `yaml:"tavily_api_keys"`
 	RequireWebSearchOnly bool     `yaml:"require_web_search_only"`
+	// OnlyModels, when non-empty, restricts interception to requests whose
+	// host-resolved upstream model matches one of the listed patterns.
+	// Patterns support a trailing "*" wildcard (e.g. "model_hub/*").
+	OnlyModels []string `yaml:"only_models"`
 }
 
 type registration struct {
@@ -276,14 +280,15 @@ func pluginRegistration() registration {
 				{Name: "default_provider_model", Type: pluginapi.ConfigFieldTypeString, Description: "Optional execution model on default_provider route."},
 				{Name: "tavily_api_keys", Type: pluginapi.ConfigFieldTypeArray, Description: "Tavily API keys (round-robin) when route=tavily."},
 				{Name: "require_web_search_only", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Require tools to be exclusively typed web_search (matches antigravity-only path)."},
+				{Name: "only_models", Type: pluginapi.ConfigFieldTypeArray, Description: "Intercept only host-resolved upstream models matching these exact names or trailing-* prefixes."},
 			},
 		},
 		Capabilities: registrationCapability{
 			ModelRouter:           true,
 			Executor:              true,
 			ExecutorModelScope:    string(pluginapi.ExecutorModelScopeStatic),
-			ExecutorInputFormats:  []string{"claude"},
-			ExecutorOutputFormats: []string{"claude"},
+			ExecutorInputFormats:  []string{"claude", "openai-response"},
+			ExecutorOutputFormats: []string{"claude", "openai-response"},
 		},
 	}
 }
@@ -297,11 +302,23 @@ func routeModel(raw []byte) ([]byte, error) {
 	if !cfg.Enabled {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
 	}
-	if !isClaudeSourceFormat(req.SourceFormat) {
+	// Codex attaches web_search alongside its normal tool set on every reasoning
+	// turn, so the exclusive-web_search gate would never match. Relax it for the
+	// OpenAI Responses path; only_models still scopes interception to upstreams
+	// that lack native web search.
+	requireWebSearchOnly := cfg.RequireWebSearchOnly
+	if isOpenAIResponsesSourceFormat(req.SourceFormat) {
+		requireWebSearchOnly = false
+	}
+	if !isSupportedWebSearchRequest(req.SourceFormat, req.Body, requireWebSearchOnly) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
 	}
-	if !isClaudeCodeBuiltinWebSearchRequest(req.Body, cfg.RequireWebSearchOnly) {
+	// Non-matching upstream models pass through to their native provider.
+	if !modelMatchesOnly(req.UpstreamModels, req.RequestedModel, cfg.OnlyModels) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
+	}
+	if isOpenAIResponsesSourceFormat(req.SourceFormat) {
+		return okEnvelope(routeOpenAIResponsesWebSearch(cfg, req.ModelRouteRequest))
 	}
 	route := strings.TrimSpace(cfg.Route)
 	if isFallbackRoute(route) {
@@ -340,7 +357,16 @@ func execute(raw []byte) ([]byte, error) {
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
 		return nil, errUnmarshal
 	}
-	body, headers, errRun := runWebSearchWithExecutionFallback(context.Background(), req.ExecutorRequest, req.HostCallbackID)
+	var (
+		body    []byte
+		headers http.Header
+		errRun  error
+	)
+	if isOpenAIResponsesSourceFormat(req.SourceFormat) {
+		body, headers, errRun = runOpenAIResponsesOrchestration(context.Background(), req.ExecutorRequest, req.HostCallbackID)
+	} else {
+		body, headers, errRun = runWebSearchWithExecutionFallback(context.Background(), req.ExecutorRequest, req.HostCallbackID)
+	}
 	if errRun != nil {
 		return errorEnvelope("executor_error", errRun.Error()), nil
 	}
