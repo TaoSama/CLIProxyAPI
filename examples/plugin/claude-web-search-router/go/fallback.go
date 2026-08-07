@@ -94,28 +94,17 @@ func routeWithFallback(cfg pluginConfig, req pluginapi.ModelRouteRequest) plugin
 	return routeWithExecutionOrchestration(cfg, req, string(backendFallback))
 }
 
-func routeOpenAIResponsesWebSearch(cfg pluginConfig, req pluginapi.ModelRouteRequest) pluginapi.ModelRouteResponse {
-	route := strings.TrimSpace(cfg.Route)
-	if isFallbackRoute(route) {
-		resp, ok := tryRouteBackend(backendCodexWebSearch, cfg, req)
-		if ok {
-			return resp
-		}
-		return pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_web_search_codex_unavailable"}
+// routeOpenAIResponsesWebSearch self-orchestrates OpenAI Responses (Codex) turns
+// that carry a web_search tool. Instead of switching the whole reasoning turn to a
+// different provider (which loses the client's own model), the plugin runs the
+// client's model itself and executes only the actual search action against a search
+// backend when the model calls it. See responses_orchestration.go.
+func routeOpenAIResponsesWebSearch(_ pluginConfig, _ pluginapi.ModelRouteRequest) pluginapi.ModelRouteResponse {
+	return pluginapi.ModelRouteResponse{
+		Handled:    true,
+		TargetKind: pluginapi.ModelRouteTargetSelf,
+		Reason:     "responses_web_search_orchestrated",
 	}
-
-	backend := routeBackend(route)
-	if backend == backendTavily {
-		return pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_web_search_tavily_unsupported"}
-	}
-	resp, ok := tryRouteBackend(backend, cfg, req)
-	if ok {
-		return resp
-	}
-	if strings.TrimSpace(resp.Reason) != "" {
-		return resp
-	}
-	return pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_web_search_backend_unavailable"}
 }
 
 func routeWithExecutionOrchestration(cfg pluginConfig, req pluginapi.ModelRouteRequest, route string) pluginapi.ModelRouteResponse {

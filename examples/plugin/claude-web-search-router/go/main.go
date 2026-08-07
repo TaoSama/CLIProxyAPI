@@ -287,8 +287,8 @@ func pluginRegistration() registration {
 			ModelRouter:           true,
 			Executor:              true,
 			ExecutorModelScope:    string(pluginapi.ExecutorModelScopeStatic),
-			ExecutorInputFormats:  []string{"claude"},
-			ExecutorOutputFormats: []string{"claude"},
+			ExecutorInputFormats:  []string{"claude", "openai-response"},
+			ExecutorOutputFormats: []string{"claude", "openai-response"},
 		},
 	}
 }
@@ -302,7 +302,15 @@ func routeModel(raw []byte) ([]byte, error) {
 	if !cfg.Enabled {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
 	}
-	if !isSupportedWebSearchRequest(req.SourceFormat, req.Body, cfg.RequireWebSearchOnly) {
+	// Codex attaches web_search alongside its normal tool set on every reasoning
+	// turn, so the exclusive-web_search gate would never match. Relax it for the
+	// OpenAI Responses path; only_models still scopes interception to upstreams
+	// that lack native web search.
+	requireWebSearchOnly := cfg.RequireWebSearchOnly
+	if isOpenAIResponsesSourceFormat(req.SourceFormat) {
+		requireWebSearchOnly = false
+	}
+	if !isSupportedWebSearchRequest(req.SourceFormat, req.Body, requireWebSearchOnly) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
 	}
 	// Non-matching upstream models pass through to their native provider.
@@ -349,7 +357,16 @@ func execute(raw []byte) ([]byte, error) {
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
 		return nil, errUnmarshal
 	}
-	body, headers, errRun := runWebSearchWithExecutionFallback(context.Background(), req.ExecutorRequest, req.HostCallbackID)
+	var (
+		body    []byte
+		headers http.Header
+		errRun  error
+	)
+	if isOpenAIResponsesSourceFormat(req.SourceFormat) {
+		body, headers, errRun = runOpenAIResponsesOrchestration(context.Background(), req.ExecutorRequest, req.HostCallbackID)
+	} else {
+		body, headers, errRun = runWebSearchWithExecutionFallback(context.Background(), req.ExecutorRequest, req.HostCallbackID)
+	}
 	if errRun != nil {
 		return errorEnvelope("executor_error", errRun.Error()), nil
 	}

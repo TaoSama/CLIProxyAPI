@@ -5,7 +5,7 @@ This plugin routes built-in `web_search` requests away from upstream models that
 ## What it detects
 
 - Inbound `claude` / `anthropic` with `tools[].type` `web_search_20250305` or `web_search_20260209`
-- Inbound `openai-response` with `tools[].type` `web_search` or `web_search_preview`; these requests route directly to the configured Codex web-search model so the Responses protocol is preserved
+- Inbound `openai-response` with `tools[].type` `web_search` or `web_search_preview`; the plugin runs the client's own model and orchestrates search as a function tool (see below) instead of switching the whole turn to another provider
 - Optional Claude Code heuristics: system text like “web search tool use”, or user text
   `Perform a web search for the query: …`
 
@@ -13,10 +13,21 @@ This plugin routes built-in `web_search` requests away from upstream models that
 
 | Value                    | Behavior                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fallback` (**default**) | Claude Messages requests use the plugin executor's **Tavily → Codex** fallback. OpenAI Responses requests route directly to the configured Codex web-search model. |
+| `fallback` (**default**) | Claude Messages requests use the plugin executor's **Tavily → Codex** fallback. OpenAI Responses requests run the client's own model and orchestrate search as a function tool. |
 | `antigravity_google` / `codex_web_search` / `xai_web_search` / `tavily` | Same orchestration for that backend’s chain member(s): execution retry + penalty apply when multiple backends are eligible. |
 | `default_provider`             | `default_provider` + optional `default_provider_model` via built-in AuthManager (not orchestrated).                                                                                                                                                                                                                          |
 Routing for `fallback` requires at least one runnable backend (providers in `AvailableProviders` where needed, resolvable antigravity model, or `tavily_api_keys`).
+
+### OpenAI Responses (Codex) web search orchestration
+
+Codex attaches a hosted `web_search` tool to every normal reasoning turn, even when the model never searches. Rather than redirecting the whole turn to another provider (which discards the client's model), the plugin self-orchestrates:
+
+1. Rewrites the hosted `web_search` tool into a plain `web_search` function tool the client model can call.
+2. Runs the client's own model (whatever the request asked for, e.g. `claude-opus-4-8` or a `gpt-*` upstream) through the host with `EntryProtocol`/`ExitProtocol` = `openai-response`.
+3. When the model emits a `web_search` function call, executes the search backend (Tavily) for just that query, appends `function_call` + `function_call_output` to `input`, and re-runs the model.
+4. Repeats until the model produces a final answer or the round cap is reached, then forwards that turn verbatim as OpenAI Responses output.
+
+The model reasons for the whole turn; only the actual search action hits the search backend. Turns that never call `web_search` pass through in a single round with no search. `only_models` still scopes interception to upstreams that lack native web search; natively search-capable upstreams are not listed there and pass through untouched. Requires `tavily_api_keys` to perform real searches; without them the model is told the search failed and degrades gracefully.
 
 ### xAI web search notes (aligned with upstream docs)
 
