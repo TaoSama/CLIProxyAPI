@@ -92,6 +92,29 @@ func TestExtractResponsesWebSearchCallNoneWhenPlainText(t *testing.T) {
 	}
 }
 
+// TestExtractResponsesWebSearchCallStreamAfterPreambleMessage locks the real
+// Codex/Opus behavior: a search turn emits a preamble message ("I'll search…")
+// before the web_search function_call. Detection must scan the whole turn, not
+// just the first output item.
+func TestExtractResponsesWebSearchCallStreamAfterPreambleMessage(t *testing.T) {
+	sse := "event: response.output_item.added\n" +
+		"data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"role\":\"assistant\"}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"I'll search.\"}]}}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[" +
+		"{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"I'll search.\"}]}," +
+		"{\"type\":\"function_call\",\"name\":\"web_search\",\"call_id\":\"cx\",\"arguments\":\"{\\\"query\\\":\\\"go 1.26\\\"}\"}" +
+		"]}}\n\n"
+	call, ok := extractResponsesWebSearchCall([]byte(sse), "text/event-stream")
+	if !ok {
+		t.Fatal("web_search call after a preamble message must still be detected")
+	}
+	if call.callID != "cx" || call.query != "go 1.26" {
+		t.Fatalf("call = %#v", call)
+	}
+}
+
 func TestOrchestrateResponsesSearchFeedsResultAndContinues(t *testing.T) {
 	var turns [][]byte
 	searchCalls := 0

@@ -48,7 +48,7 @@ func runOpenAIResponsesOrchestration(ctx context.Context, exec pluginapi.Executo
 	cfg := loadedConfig()
 	model := strings.TrimSpace(exec.Model)
 	runTurn := func(ctx context.Context, body []byte) ([]byte, string, error) {
-		payload, status, errRun := hostModelExecuteResponses(ctx, hostCallbackID, model, body, false)
+		payload, status, errRun := hostModelExecuteResponses(ctx, hostCallbackID, model, body)
 		if errRun != nil {
 			return nil, "", errRun
 		}
@@ -67,26 +67,34 @@ func runOpenAIResponsesOrchestration(ctx context.Context, exec pluginapi.Executo
 	return payload, http.Header{"Content-Type": []string{contentType}}, nil
 }
 
-// runOpenAIResponsesOrchestrationStream runs the streaming orchestration loop and
-// emits only the final (answer) turn to the client stream.
+// runOpenAIResponsesOrchestrationStream streams the model turn live to the client
+// while watching the first output item. If the model starts a web_search function
+// call, the turn is buffered instead of forwarded, the search runs, and the loop
+// continues; otherwise the answer streams straight through in a single turn (the
+// common no-search path pays no extra round trip).
 func runOpenAIResponsesOrchestrationStream(ctx context.Context, exec pluginapi.ExecutorRequest, hostCallbackID, pluginStreamID string) error {
 	cfg := loadedConfig()
 	model := strings.TrimSpace(exec.Model)
-	runTurn := func(ctx context.Context, body []byte) ([]byte, string, error) {
-		payload, status, errRun := hostModelStreamBufferResponses(ctx, hostCallbackID, model, body)
-		if errRun != nil {
-			return nil, "", errRun
+	search := newResponsesSearchExecutor(cfg)
+	maxResults := responsesWebSearchMaxResults(openAIResponsesRequestBody(exec))
+	current := rewriteResponsesWebSearchTool(openAIResponsesRequestBody(exec))
+
+	for round := 0; round < maxOrchestrationRounds; round++ {
+		// On the last allowed round, forward unconditionally so a model that keeps
+		// requesting search still yields a visible turn.
+		forceForward := round == maxOrchestrationRounds-1
+		call, ok, errTurn := streamResponsesTurnDetectingSearch(ctx, hostCallbackID, model, current, pluginStreamID, forceForward)
+		if errTurn != nil {
+			return errTurn
 		}
-		if status >= 400 {
-			return nil, "", fmt.Errorf("host model status %d", status)
+		if !ok {
+			// Turn was the final answer and has already been streamed to the client.
+			return nil
 		}
-		return payload, "text/event-stream", nil
+		result := runResponsesSearch(ctx, search, call.query, maxResults)
+		current = appendResponsesSearchResult(current, call, result)
 	}
-	payload, _, errRun := orchestrateResponsesSearch(ctx, openAIResponsesRequestBody(exec), cfg, runTurn, newResponsesSearchExecutor(cfg))
-	if errRun != nil {
-		return errRun
-	}
-	return emitPluginStreamChunk(pluginStreamID, payload)
+	return nil
 }
 
 // orchestrateResponsesSearch is the protocol-agnostic loop: rewrite the hosted
@@ -301,10 +309,7 @@ func responsesWebSearchMaxResults(body []byte) int {
 
 // hostModelExecuteResponses runs one non-streaming OpenAI Responses turn for the
 // client model through the host callback.
-func hostModelExecuteResponses(ctx context.Context, hostCallbackID, execModel string, body []byte, stream bool) ([]byte, int, error) {
-	if stream {
-		return hostModelStreamBufferResponses(ctx, hostCallbackID, execModel, body)
-	}
+func hostModelExecuteResponses(ctx context.Context, hostCallbackID, execModel string, body []byte) ([]byte, int, error) {
 	raw, errCall := callHost(pluginabi.MethodHostModelExecute, hostModelExecutionRequest{
 		HostModelExecutionRequest: pluginapi.HostModelExecutionRequest{
 			EntryProtocol: "openai-response",
@@ -328,10 +333,22 @@ func hostModelExecuteResponses(ctx context.Context, hostCallbackID, execModel st
 	return resp.Body, resp.StatusCode, nil
 }
 
-// hostModelStreamBufferResponses runs one streaming OpenAI Responses turn and
-// buffers the full SSE payload so the orchestration loop can inspect it before
-// deciding whether to forward it to the client.
-func hostModelStreamBufferResponses(ctx context.Context, hostCallbackID, execModel string, body []byte) ([]byte, int, error) {
+// streamResponsesTurnDetectingSearch runs one streaming OpenAI Responses turn,
+// buffering the whole turn to decide whether it is a search action or the final
+// answer. A single turn can interleave a preamble message ("I'll search…") with
+// a web_search function call, so the decision cannot be made from the first
+// output item alone — the entire turn must be inspected.
+//
+//   - The turn contains a web_search function call: nothing is forwarded; the
+//     call is extracted and (call, true) is returned so the loop can run the
+//     search and continue on the same client model.
+//   - The turn contains no web_search call (the final answer, or forceForward on
+//     the round cap): the buffered turn is flushed live to the client and
+//     ok=false is returned.
+//
+// Forwarding only the answer turn keeps the client stream a single coherent
+// Responses stream; intermediate search turns are consumed internally.
+func streamResponsesTurnDetectingSearch(ctx context.Context, hostCallbackID, execModel string, body []byte, pluginStreamID string, forceForward bool) (responsesWebSearchCall, bool, error) {
 	raw, errCall := callHost(pluginabi.MethodHostModelExecuteStream, hostModelExecutionRequest{
 		HostModelExecutionRequest: pluginapi.HostModelExecutionRequest{
 			EntryProtocol: "openai-response",
@@ -343,41 +360,72 @@ func hostModelStreamBufferResponses(ctx context.Context, hostCallbackID, execMod
 		HostCallbackID: hostCallbackID,
 	})
 	if errCall != nil {
-		return nil, hostHTTPStatusFromError(errCall), errCall
+		return responsesWebSearchCall{}, false, errCall
 	}
 	var resp pluginapi.HostModelStreamResponse
 	if errDecode := json.Unmarshal(raw, &resp); errDecode != nil {
-		return nil, 0, errDecode
+		return responsesWebSearchCall{}, false, errDecode
 	}
 	if resp.StatusCode >= 400 {
 		_ = closeHostModelStream(resp.StreamID)
-		return nil, resp.StatusCode, fmt.Errorf("host model status %d", resp.StatusCode)
+		return responsesWebSearchCall{}, false, fmt.Errorf("host model status %d", resp.StatusCode)
 	}
 	if strings.TrimSpace(resp.StreamID) == "" {
-		return nil, 0, fmt.Errorf("host model stream: empty stream_id")
+		return responsesWebSearchCall{}, false, fmt.Errorf("host model stream: empty stream_id")
 	}
 	defer func() { _ = closeHostModelStream(resp.StreamID) }()
 
-	var buf bytes.Buffer
+	var (
+		buffered [][]byte
+		full     bytes.Buffer
+	)
 	for {
 		chunkRaw, errRead := callHost(pluginabi.MethodHostModelStreamRead, pluginapi.HostModelStreamReadRequest{StreamID: resp.StreamID})
 		if errRead != nil {
-			return nil, hostHTTPStatusFromError(errRead), errRead
+			return responsesWebSearchCall{}, false, errRead
 		}
 		var chunk pluginapi.HostModelStreamReadResponse
 		if errDecode := json.Unmarshal(chunkRaw, &chunk); errDecode != nil {
-			return nil, 0, errDecode
+			return responsesWebSearchCall{}, false, errDecode
 		}
 		if chunk.Error != "" {
-			code := hostHTTPStatusFromError(fmt.Errorf("%s", chunk.Error))
-			return nil, code, fmt.Errorf("%s", chunk.Error)
+			return responsesWebSearchCall{}, false, fmt.Errorf("%s", chunk.Error)
 		}
 		if len(chunk.Payload) > 0 {
-			buf.Write(chunk.Payload)
+			payload := bytes.Clone(chunk.Payload)
+			full.Write(payload)
+			buffered = append(buffered, payload)
 		}
 		if chunk.Done {
 			break
 		}
 	}
-	return buf.Bytes(), http.StatusOK, nil
+
+	flush := func() error {
+		for _, b := range buffered {
+			if errEmit := emitPluginStreamChunk(pluginStreamID, bytes.Clone(b)); errEmit != nil {
+				return errEmit
+			}
+		}
+		return nil
+	}
+
+	// On the round cap, forward whatever the model produced regardless of whether
+	// it still wants to search, so the client sees a terminal turn.
+	if forceForward {
+		if errFlush := flush(); errFlush != nil {
+			return responsesWebSearchCall{}, false, errFlush
+		}
+		return responsesWebSearchCall{}, false, nil
+	}
+
+	if call, ok := extractResponsesWebSearchCall(full.Bytes(), "text/event-stream"); ok {
+		// Search turn: consumed internally, nothing forwarded to the client.
+		return call, true, nil
+	}
+	// Final answer turn: forward the buffered stream live.
+	if errFlush := flush(); errFlush != nil {
+		return responsesWebSearchCall{}, false, errFlush
+	}
+	return responsesWebSearchCall{}, false, nil
 }
