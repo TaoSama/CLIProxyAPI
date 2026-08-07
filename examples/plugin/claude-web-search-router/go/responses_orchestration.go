@@ -67,11 +67,11 @@ func runOpenAIResponsesOrchestration(ctx context.Context, exec pluginapi.Executo
 	return payload, http.Header{"Content-Type": []string{contentType}}, nil
 }
 
-// runOpenAIResponsesOrchestrationStream streams the model turn live to the client
-// while watching the first output item. If the model starts a web_search function
-// call, the turn is buffered instead of forwarded, the search runs, and the loop
-// continues; otherwise the answer streams straight through in a single turn (the
-// common no-search path pays no extra round trip).
+// runOpenAIResponsesOrchestrationStream drives the streaming search loop: each
+// turn runs the client model, and streamResponsesTurnDetectingSearch buffers the
+// turn to decide whether it is a web_search action (consumed internally, search
+// runs, loop continues) or the final answer (streamed live to the client). A turn
+// that never calls web_search is a single round.
 func runOpenAIResponsesOrchestrationStream(ctx context.Context, exec pluginapi.ExecutorRequest, hostCallbackID, pluginStreamID string) error {
 	cfg := loadedConfig()
 	model := strings.TrimSpace(exec.Model)
