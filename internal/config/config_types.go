@@ -314,6 +314,15 @@ type CloakConfig struct {
 	// CacheUserID controls whether Claude user_id values are cached per API key.
 	// When false, a fresh random user_id is generated for every request.
 	CacheUserID *bool `yaml:"cache-user-id,omitempty" json:"cache-user-id,omitempty"`
+
+	// CacheTTL selects the ephemeral cache_control TTL that ensureCacheControl
+	// injects when the client sends no cache_control of its own. Valid values are
+	// "5m" (default when empty) and "1h". "1h" writes prompt-cache breakpoints into
+	// the 1-hour ephemeral bucket, which survives idle gaps that would otherwise
+	// expire a 5m entry and force a full multi-turn history rebuild. Applies to all
+	// injected breakpoints (tools, system, messages) so the 1h/5m ordering
+	// constraint is never violated.
+	CacheTTL string `yaml:"cache-ttl,omitempty" json:"cache-ttl,omitempty"`
 }
 
 // ClaudeKey represents the configuration for a Claude API key,

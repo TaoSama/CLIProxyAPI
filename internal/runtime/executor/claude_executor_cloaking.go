@@ -858,20 +858,33 @@ func applyCloaking(
 // Up to 4 cache breakpoints are allowed per request. Tools, System, and Messages are INDEPENDENT breakpoints.
 // This enables up to 90% cost reduction on cached tokens (cache read = 0.1x base price).
 // See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
-func ensureCacheControl(payload []byte) []byte {
+func ensureCacheControl(payload []byte, ttl string) []byte {
 	// 1. Inject cache_control into the LAST non-deferred tool
 	// Tools are cached first in the hierarchy, so this is the most important breakpoint.
-	payload = injectToolsCacheControl(payload)
+	payload = injectToolsCacheControl(payload, ttl)
 
 	// 2. Inject cache_control into the LAST system prompt element
 	// System is the second level in the cache hierarchy.
-	payload = injectSystemCacheControl(payload)
+	payload = injectSystemCacheControl(payload, ttl)
 
 	// 3. Inject cache_control into messages for multi-turn conversation caching
 	// This caches the conversation history up to the second-to-last user turn.
-	payload = injectMessagesCacheControl(payload)
+	payload = injectMessagesCacheControl(payload, ttl)
 
 	return payload
+}
+
+// newEphemeralCacheControl builds an ephemeral cache_control object. A ttl of
+// "1h" writes into the 1-hour bucket; any other value (including empty) keeps
+// the default 5-minute behavior by omitting the ttl field. All injected
+// breakpoints in a single request must share the same ttl so the
+// 1h-must-not-follow-5m ordering constraint is never violated.
+func newEphemeralCacheControl(ttl string) map[string]string {
+	cc := map[string]string{"type": "ephemeral"}
+	if ttl == "1h" {
+		cc["ttl"] = "1h"
+	}
+	return cc
 }
 
 func countCacheControls(payload []byte) int {
@@ -1187,7 +1200,7 @@ func enforceCacheControlLimit(payload []byte, maxBlocks int) []byte {
 // Only adds cache_control if:
 // - There are at least 2 user turns in the conversation
 // - No message content already has cache_control
-func injectMessagesCacheControl(payload []byte) []byte {
+func injectMessagesCacheControl(payload []byte, ttl string) []byte {
 	messages := gjson.GetBytes(payload, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return payload
@@ -1238,7 +1251,7 @@ func injectMessagesCacheControl(payload []byte) []byte {
 		contentCount := int(content.Get("#").Int())
 		if contentCount > 0 {
 			cacheControlPath := fmt.Sprintf("messages.%d.content.%d.cache_control", secondToLastUserIdx, contentCount-1)
-			result, err := sjson.SetBytes(payload, cacheControlPath, map[string]string{"type": "ephemeral"})
+			result, err := sjson.SetBytes(payload, cacheControlPath, newEphemeralCacheControl(ttl))
 			if err != nil {
 				log.Warnf("failed to inject cache_control into messages: %v", err)
 				return payload
@@ -1252,9 +1265,7 @@ func injectMessagesCacheControl(payload []byte) []byte {
 			{
 				"type": "text",
 				"text": text,
-				"cache_control": map[string]string{
-					"type": "ephemeral",
-				},
+				"cache_control": newEphemeralCacheControl(ttl),
 			},
 		}
 		result, err := sjson.SetBytes(payload, contentPath, newContent)
@@ -1271,7 +1282,7 @@ func injectMessagesCacheControl(payload []byte) []byte {
 // injectToolsCacheControl adds cache_control to the last non-deferred tool in the tools array.
 // Deferred tools cannot use prompt caching, so trailing deferred tools are skipped.
 // This only adds cache_control if NO tool in the array already has it.
-func injectToolsCacheControl(payload []byte) []byte {
+func injectToolsCacheControl(payload []byte, ttl string) []byte {
 	tools := gjson.GetBytes(payload, "tools")
 	if !tools.Exists() || !tools.IsArray() {
 		return payload
@@ -1295,7 +1306,7 @@ func injectToolsCacheControl(payload []byte) []byte {
 	}
 
 	lastToolPath := fmt.Sprintf("tools.%d.cache_control", lastEligibleToolIndex)
-	result, err := sjson.SetBytes(payload, lastToolPath, map[string]string{"type": "ephemeral"})
+	result, err := sjson.SetBytes(payload, lastToolPath, newEphemeralCacheControl(ttl))
 	if err != nil {
 		log.Warnf("failed to inject cache_control into tools array: %v", err)
 		return payload
@@ -1307,7 +1318,7 @@ func injectToolsCacheControl(payload []byte) []byte {
 // injectSystemCacheControl adds cache_control to the last element in the system prompt.
 // Converts string system prompts to array format if needed.
 // This only adds cache_control if NO system element already has it.
-func injectSystemCacheControl(payload []byte) []byte {
+func injectSystemCacheControl(payload []byte, ttl string) []byte {
 	system := gjson.GetBytes(payload, "system")
 	if !system.Exists() {
 		return payload
@@ -1334,7 +1345,7 @@ func injectSystemCacheControl(payload []byte) []byte {
 
 		// Add cache_control to the last system element
 		lastSystemPath := fmt.Sprintf("system.%d.cache_control", count-1)
-		result, err := sjson.SetBytes(payload, lastSystemPath, map[string]string{"type": "ephemeral"})
+		result, err := sjson.SetBytes(payload, lastSystemPath, newEphemeralCacheControl(ttl))
 		if err != nil {
 			log.Warnf("failed to inject cache_control into system array: %v", err)
 			return payload
@@ -1348,9 +1359,7 @@ func injectSystemCacheControl(payload []byte) []byte {
 			{
 				"type": "text",
 				"text": text,
-				"cache_control": map[string]string{
-					"type": "ephemeral",
-				},
+				"cache_control": newEphemeralCacheControl(ttl),
 			},
 		}
 		result, err := sjson.SetBytes(payload, "system", newSystem)

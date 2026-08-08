@@ -103,7 +103,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 
 	// Auto-inject cache_control if missing (optimization for ClawdBot/clients without caching support)
 	if countCacheControls(body) == 0 {
-		body = ensureCacheControl(body)
+		body = ensureCacheControl(body, resolveInjectedCacheTTL(e.cfg, auth))
 	}
 
 	// Enforce Anthropic's cache_control block limit (max 4 breakpoints per request).

@@ -489,6 +489,21 @@ func resolveClaudeKeyCloakConfig(cfg *config.Config, auth *cliproxyauth.Auth) *c
 	return entry.Cloak
 }
 
+// resolveInjectedCacheTTL returns the ephemeral cache_control TTL that
+// ensureCacheControl should inject for the selected Claude credential. It reads
+// the per-key cloak.cache-ttl setting and normalizes it: "1h" enables the
+// 1-hour bucket, anything else (including empty) keeps the default 5-minute
+// behavior. Only credential-scoped config is consulted so other upstreams are
+// unaffected.
+func resolveInjectedCacheTTL(cfg *config.Config, auth *cliproxyauth.Auth) string {
+	if cloak := resolveClaudeKeyCloakConfig(cfg, auth); cloak != nil {
+		if strings.EqualFold(strings.TrimSpace(cloak.CacheTTL), "1h") {
+			return "1h"
+		}
+	}
+	return ""
+}
+
 func rebuildMidSystemMessageEnabled(cfg *config.Config, auth *cliproxyauth.Auth) bool {
 	if auth != nil && auth.Attributes != nil && strings.EqualFold(strings.TrimSpace(auth.Attributes["rebuild_mid_system_message"]), "true") {
 		return true

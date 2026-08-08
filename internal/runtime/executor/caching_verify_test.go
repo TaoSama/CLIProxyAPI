@@ -11,7 +11,7 @@ func TestEnsureCacheControl(t *testing.T) {
 	// Test case 1: System prompt as string
 	t.Run("String System Prompt", func(t *testing.T) {
 		input := []byte(`{"model": "claude-3-5-sonnet", "system": "This is a long system prompt", "messages": []}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		res := gjson.GetBytes(output, "system.0.cache_control.type")
 		if res.String() != "ephemeral" {
@@ -22,7 +22,7 @@ func TestEnsureCacheControl(t *testing.T) {
 	// Test case 2: System prompt as array
 	t.Run("Array System Prompt", func(t *testing.T) {
 		input := []byte(`{"model": "claude-3-5-sonnet", "system": [{"type": "text", "text": "Part 1"}, {"type": "text", "text": "Part 2"}], "messages": []}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		// cache_control should only be on the LAST element
 		res0 := gjson.GetBytes(output, "system.0.cache_control")
@@ -47,7 +47,7 @@ func TestEnsureCacheControl(t *testing.T) {
 			"system": "System prompt",
 			"messages": []
 		}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		// cache_control should only be on the LAST tool
 		tool0Cache := gjson.GetBytes(output, "tools.0.cache_control")
@@ -78,7 +78,7 @@ func TestEnsureCacheControl(t *testing.T) {
 			"system": [{"type": "text", "text": "System"}],
 			"messages": []
 		}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		// Tool already has cache_control - should not be changed
 		tool0Cache := gjson.GetBytes(output, "tools.0.cache_control.type")
@@ -103,7 +103,7 @@ func TestEnsureCacheControl(t *testing.T) {
 			],
 			"messages": [{"role": "user", "content": "Hi"}]
 		}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		toolCache := gjson.GetBytes(output, "tools.0.cache_control.type")
 		if toolCache.String() != "ephemeral" {
@@ -130,7 +130,7 @@ func TestEnsureCacheControl(t *testing.T) {
 			"messages": [{"role": "user", "content": "Hello"}]
 		}`, toolsJSON))
 
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		// Only the last tool (index 49) should have cache_control
 		for i := 0; i < 49; i++ {
@@ -157,7 +157,7 @@ func TestEnsureCacheControl(t *testing.T) {
 	// Test case 7: Empty tools array
 	t.Run("Empty Tools Array", func(t *testing.T) {
 		input := []byte(`{"model": "claude-3-5-sonnet", "tools": [], "system": "Test", "messages": []}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		// System should still get cache_control
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
@@ -178,7 +178,7 @@ func TestEnsureCacheControl(t *testing.T) {
 				{"role": "user", "content": "Third user"}
 			]
 		}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		cacheType := gjson.GetBytes(output, "messages.2.content.0.cache_control.type")
 		if cacheType.String() != "ephemeral" {
@@ -201,7 +201,7 @@ func TestEnsureCacheControl(t *testing.T) {
 				{"role": "user", "content": [{"type": "text", "text": "Second user"}]}
 			]
 		}`)
-		output := ensureCacheControl(input)
+		output := ensureCacheControl(input, "")
 
 		userCache := gjson.GetBytes(output, "messages.0.content.0.cache_control")
 		if userCache.Exists() {
@@ -269,7 +269,7 @@ func TestInjectToolsCacheControlSkipsDeferredTools(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			output := injectToolsCacheControl([]byte(tt.input))
+			output := injectToolsCacheControl([]byte(tt.input), "")
 			tools := gjson.GetBytes(output, "tools").Array()
 			cacheCount := 0
 			for index, tool := range tools {
@@ -319,7 +319,7 @@ func TestCacheControlOrder(t *testing.T) {
 		]
 	}`)
 
-	output := ensureCacheControl(input)
+	output := ensureCacheControl(input, "")
 
 	// 1. Last tool has cache_control
 	if gjson.GetBytes(output, "tools.1.cache_control.type").String() != "ephemeral" {
@@ -342,4 +342,46 @@ func TestCacheControlOrder(t *testing.T) {
 	}
 
 	t.Log("cache order correct: tools -> system")
+}
+
+func TestEnsureCacheControlTTL(t *testing.T) {
+	input := []byte(`{"tools":[{"name":"t1"},{"name":"t2"}],"system":[{"type":"text","text":"sys"}],"messages":[{"role":"user","content":[{"type":"text","text":"u1"}]},{"role":"assistant","content":[{"type":"text","text":"a1"}]},{"role":"user","content":[{"type":"text","text":"u2"}]}]}`)
+
+	t.Run("1h injects ttl on every breakpoint", func(t *testing.T) {
+		out := ensureCacheControl(input, "1h")
+		for _, p := range []string{"tools.1.cache_control", "system.0.cache_control", "messages.0.content.0.cache_control"} {
+			cc := gjson.GetBytes(out, p)
+			if !cc.Exists() {
+				t.Fatalf("missing cache_control at %s", p)
+			}
+			if cc.Get("type").String() != "ephemeral" {
+				t.Fatalf("%s type = %q, want ephemeral", p, cc.Get("type").String())
+			}
+			if cc.Get("ttl").String() != "1h" {
+				t.Fatalf("%s ttl = %q, want 1h", p, cc.Get("ttl").String())
+			}
+		}
+	})
+
+	t.Run("empty ttl keeps default 5m (no ttl field)", func(t *testing.T) {
+		out := ensureCacheControl(input, "")
+		for _, p := range []string{"tools.1.cache_control", "system.0.cache_control", "messages.0.content.0.cache_control"} {
+			cc := gjson.GetBytes(out, p)
+			if !cc.Exists() {
+				t.Fatalf("missing cache_control at %s", p)
+			}
+			if cc.Get("ttl").Exists() {
+				t.Fatalf("%s unexpectedly has ttl = %q", p, cc.Get("ttl").String())
+			}
+		}
+	})
+
+	t.Run("1h survives normalizeCacheControlTTL (all-1h is ordering-safe)", func(t *testing.T) {
+		out := normalizeCacheControlTTL(ensureCacheControl(input, "1h"))
+		for _, p := range []string{"tools.1.cache_control.ttl", "system.0.cache_control.ttl", "messages.0.content.0.cache_control.ttl"} {
+			if gjson.GetBytes(out, p).String() != "1h" {
+				t.Fatalf("%s = %q, want 1h preserved after normalize", p, gjson.GetBytes(out, p).String())
+			}
+		}
+	})
 }
