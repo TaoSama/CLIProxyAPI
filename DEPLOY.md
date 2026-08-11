@@ -140,8 +140,6 @@ ssh devbox 'cd ~/CLIProxyAPI-verify/examples/plugin/claude-web-search-router/go 
 | `disable-claude-cloak-mode` | `true`，关闭 Claude 请求伪装，保护上游 prompt cache |
 | `codex.optimize-multi-agent-v2` | `true`，Codex 多 Agent v2 兼容 |
 
-Codex cookie（OAuth 凭据）放在 `auth-dir` 下，文件名格式 `codex-<hash>-<email>-<plan>.json`，包含 `access_token` / `refresh_token` / `id_token`。
-
 ### 2.5 重启 + 验证
 
 ```bash
