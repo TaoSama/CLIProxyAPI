@@ -22,6 +22,9 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Auth material defaults under `auths/`
 - Storage backends: file-based default; optional Postgres/git/object store (`PGSTORE_*`, `GITSTORE_*`, `OBJECTSTORE_*`)
 
+## Deploy
+- Devbox deployment runbook (build / upload / restart / smoke test / rollback) for both CLIProxyAPI and its upstream traex-api: [`DEPLOY.md`](DEPLOY.md)
+
 ## Architecture
 - `cmd/server/` — Server entrypoint
 - `internal/api/` — Gin HTTP API (routes, middleware, modules)
