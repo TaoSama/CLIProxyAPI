@@ -825,6 +825,64 @@ func TestConvertOpenAIResponsesRequestToClaude_ReplaysCustomToolCallHistory(t *t
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToClaude_MergesRepeatedCustomToolCallOutputs(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-test",
+		"input":[
+			{"type":"custom_tool_call","call_id":"call-1","name":"exec","input":"run"},
+			{"type":"custom_tool_call_output","call_id":"call-1","output":"poll 0"},
+			{"type":"custom_tool_call_output","call_id":"call-1","output":"poll 1"},
+			{"type":"custom_tool_call_output","call_id":"call-1","output":"final"}
+		]
+	}`)
+
+	root := gjson.ParseBytes(ConvertOpenAIResponsesRequestToClaude("claude-test", raw, false))
+	userContent := root.Get("messages.1.content").Array()
+	if len(userContent) != 1 {
+		t.Fatalf("user content count = %d, want one merged tool_result; output=%s", len(userContent), root.Raw)
+	}
+	toolResult := userContent[0]
+	if got := toolResult.Get("tool_use_id").String(); got != "call-1" {
+		t.Fatalf("tool_result id = %q, want call-1", got)
+	}
+	parts := toolResult.Get("content").Array()
+	if len(parts) != 3 {
+		t.Fatalf("merged content count = %d, want 3; output=%s", len(parts), root.Raw)
+	}
+	for i, want := range []string{"poll 0", "poll 1", "final"} {
+		if got := parts[i].Get("text").String(); got != want {
+			t.Errorf("content[%d].text = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToClaude_MergesRepeatedMixedToolCallOutputs(t *testing.T) {
+	const imageB64 = "iVBORw0KGgo="
+	raw := []byte(`{
+		"model":"claude-test",
+		"input":[
+			{"type":"function_call","call_id":"call-image","name":"view_image","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call-image","output":"loading"},
+			{"type":"function_call_output","call_id":"call-image","output":[{"type":"input_image","image_url":"data:image/png;base64,` + imageB64 + `"}]}
+		]
+	}`)
+
+	root := gjson.ParseBytes(ConvertOpenAIResponsesRequestToClaude("claude-test", raw, false))
+	toolResult := root.Get("messages.1.content.0")
+	if got := root.Get("messages.1.content.#").Int(); got != 1 {
+		t.Fatalf("tool_result count = %d, want 1; output=%s", got, root.Raw)
+	}
+	if got := toolResult.Get("content.0.text").String(); got != "loading" {
+		t.Fatalf("first content text = %q, want loading", got)
+	}
+	if got := toolResult.Get("content.1.type").String(); got != "image" {
+		t.Fatalf("second content type = %q, want image; output=%s", got, root.Raw)
+	}
+	if got := toolResult.Get("content.1.source.data").String(); got != imageB64 {
+		t.Fatalf("image data = %q, want %q", got, imageB64)
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToClaude_ReplaysNamespacedFunctionCallHistory(t *testing.T) {
 	raw := []byte(`{
 		"model":"claude-test",

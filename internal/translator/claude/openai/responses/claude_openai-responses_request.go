@@ -253,6 +253,26 @@ func convertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 		pendingRole = "assistant"
 		pendingToolUseParts = append(pendingToolUseParts, toolUse)
 	}
+	appendToolResult := func(toolResult []byte) {
+		if len(toolResult) == 0 {
+			return
+		}
+		if pendingRole != "" && pendingRole != "user" {
+			flushPendingMessage()
+		}
+		pendingRole = "user"
+
+		toolUseID := gjson.GetBytes(toolResult, "tool_use_id").String()
+		for i, part := range pendingParts {
+			if gjson.GetBytes(part, "type").String() != "tool_result" ||
+				gjson.GetBytes(part, "tool_use_id").String() != toolUseID {
+				continue
+			}
+			pendingParts[i] = mergeResponsesToolResults(part, toolResult)
+			return
+		}
+		pendingParts = append(pendingParts, toolResult)
+	}
 
 	if input := root.Get("input"); input.Exists() && input.IsArray() {
 		input.ForEach(func(_, item gjson.Result) bool {
@@ -419,7 +439,7 @@ func convertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 				toolResult, _ = sjson.SetBytes(toolResult, "tool_use_id", callID)
 				toolResult = applyResponsesToolResultContent(toolResult, output)
 
-				appendParts("user", toolResult)
+				appendToolResult(toolResult)
 			}
 			return true
 		})
@@ -655,6 +675,31 @@ func applyResponsesToolResultContent(toolResult []byte, output gjson.Result) []b
 	}
 	toolResult, _ = sjson.SetBytes(toolResult, "content", output.String())
 	return toolResult
+}
+
+// mergeResponsesToolResults combines streamed or incremental outputs emitted for
+// one tool call. Claude accepts exactly one tool_result for each tool_use, while
+// Responses may record several custom_tool_call_output items for the same call.
+func mergeResponsesToolResults(existing, additional []byte) []byte {
+	parts := append(responsesToolResultContentBlocks(existing), responsesToolResultContentBlocks(additional)...)
+	merged, _ := sjson.SetRawBytes(existing, "content", common.JoinRawArray(parts))
+	return merged
+}
+
+func responsesToolResultContentBlocks(toolResult []byte) [][]byte {
+	content := gjson.GetBytes(toolResult, "content")
+	if content.IsArray() {
+		parts := make([][]byte, 0, len(content.Array()))
+		content.ForEach(func(_, part gjson.Result) bool {
+			parts = append(parts, []byte(part.Raw))
+			return true
+		})
+		return parts
+	}
+
+	textPart := []byte(`{"type":"text","text":""}`)
+	textPart, _ = sjson.SetBytes(textPart, "text", content.String())
+	return [][]byte{textPart}
 }
 
 func convertResponsesContentPartToClaude(part gjson.Result) []byte {
