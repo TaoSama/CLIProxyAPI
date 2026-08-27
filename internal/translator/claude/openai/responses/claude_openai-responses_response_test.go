@@ -216,14 +216,10 @@ func TestConvertClaudeResponseToOpenAIResponses_AggregatesTextBlocksUntilMessage
 	outputs := translateClaudeResponsesStreamThroughRegistry(chunks)
 
 	counts := map[string]int{}
-	var outputTextDone gjson.Result
 	var completed gjson.Result
 	for _, output := range outputs {
 		event, data := parseClaudeResponsesSSEEvent(t, output)
 		counts[event]++
-		if event == "response.output_text.done" {
-			outputTextDone = data
-		}
 		if event == "response.completed" {
 			completed = data
 		}
@@ -232,33 +228,35 @@ func TestConvertClaudeResponseToOpenAIResponses_AggregatesTextBlocksUntilMessage
 		}
 	}
 
-	if counts["response.output_item.added"] != 1 {
-		t.Fatalf("response.output_item.added count = %d, want 1", counts["response.output_item.added"])
+	if counts["response.output_item.added"] != 3 {
+		t.Fatalf("response.output_item.added count = %d, want 3", counts["response.output_item.added"])
 	}
-	if counts["response.content_part.added"] != 1 {
-		t.Fatalf("response.content_part.added count = %d, want 1", counts["response.content_part.added"])
+	if counts["response.content_part.added"] != 2 {
+		t.Fatalf("response.content_part.added count = %d, want 2", counts["response.content_part.added"])
 	}
-	if counts["response.output_text.done"] != 1 {
-		t.Fatalf("response.output_text.done count = %d, want 1", counts["response.output_text.done"])
+	if counts["response.output_text.done"] != 2 {
+		t.Fatalf("response.output_text.done count = %d, want 2", counts["response.output_text.done"])
 	}
-	if counts["response.content_part.done"] != 1 {
-		t.Fatalf("response.content_part.done count = %d, want 1", counts["response.content_part.done"])
+	if counts["response.content_part.done"] != 2 {
+		t.Fatalf("response.content_part.done count = %d, want 2", counts["response.content_part.done"])
 	}
-	if counts["response.output_item.done"] != 1 {
-		t.Fatalf("response.output_item.done count = %d, want 1", counts["response.output_item.done"])
+	if counts["response.output_item.done"] != 3 {
+		t.Fatalf("response.output_item.done count = %d, want 3", counts["response.output_item.done"])
 	}
 	if counts["response.function_call_arguments.delta"] != 0 {
 		t.Fatalf("response.function_call_arguments.delta count = %d, want 0", counts["response.function_call_arguments.delta"])
 	}
 
-	wantText := "**Compare competitors**\n- Qwen 3.7 Max leads."
-	if got := outputTextDone.Get("text").String(); got != wantText {
-		t.Fatalf("output_text.done text = %q, want %q", got, wantText)
+	if got := completed.Get("response.output.0.content.0.text").String(); got != "**Compare competitors**\n- " {
+		t.Fatalf("completed message[0] text = %q, want %q", got, "**Compare competitors**\n- ")
 	}
-	if got := completed.Get("response.output.0.content.0.text").String(); got != wantText {
-		t.Fatalf("completed message text = %q, want %q", got, wantText)
+	if got := completed.Get("response.output.1.type").String(); got != "web_search_call" {
+		t.Fatalf("completed output[1].type = %q, want web_search_call", got)
 	}
-	if got := completed.Get("response.output.0.content.0.annotations.0.type").String(); got != "web_search_result_location" {
+	if got := completed.Get("response.output.2.content.0.text").String(); got != "Qwen 3.7 Max leads." {
+		t.Fatalf("completed message[2] text = %q, want %q", got, "Qwen 3.7 Max leads.")
+	}
+	if got := completed.Get("response.output.2.content.0.annotations.0.type").String(); got != "web_search_result_location" {
 		t.Fatalf("completed annotation type = %q", got)
 	}
 }
@@ -392,24 +390,26 @@ func TestConvertClaudeResponseToOpenAIResponses_UsesContiguousIndicesForReasonin
 		case event == "response.output_item.added" || event == "response.output_item.done":
 			itemType = data.Get("item.type").String()
 			switch itemType {
-			case "reasoning":
+			case "web_search_call":
 				wantIndex = 0
-			case "message":
+			case "reasoning":
 				wantIndex = 1
-			case "function_call":
+			case "message":
 				wantIndex = 2
+			case "function_call":
+				wantIndex = 3
 			default:
 				continue
 			}
 		case strings.HasPrefix(event, "response.reasoning_"):
 			itemType = "reasoning"
-			wantIndex = 0
+			wantIndex = 1
 		case strings.HasPrefix(event, "response.output_text.") || strings.HasPrefix(event, "response.content_part."):
 			itemType = "message"
-			wantIndex = 1
+			wantIndex = 2
 		case strings.HasPrefix(event, "response.function_call_arguments."):
 			itemType = "function_call"
-			wantIndex = 2
+			wantIndex = 3
 		case event == "response.completed":
 			completed = data
 			continue
@@ -431,17 +431,17 @@ func TestConvertClaudeResponseToOpenAIResponses_UsesContiguousIndicesForReasonin
 			t.Fatalf("no indexed %s events observed", itemType)
 		}
 	}
-	if got := completed.Get("response.output.#").Int(); got != 3 {
-		t.Fatalf("completed output count = %d, want 3", got)
+	if got := completed.Get("response.output.#").Int(); got != 4 {
+		t.Fatalf("completed output count = %d, want 4", got)
 	}
-	for index, wantType := range []string{"reasoning", "message", "function_call"} {
+	for index, wantType := range []string{"web_search_call", "reasoning", "message", "function_call"} {
 		if got := completed.Get(fmt.Sprintf("response.output.%d.type", index)).String(); got != wantType {
 			t.Fatalf("completed output[%d].type = %q, want %q", index, got, wantType)
 		}
 	}
 }
 
-func TestConvertClaudeResponseToOpenAIResponses_HiddenServerToolsDoNotCreateOutputIndexGaps(t *testing.T) {
+func TestConvertClaudeResponseToOpenAIResponses_ServerToolsSurfaceWithoutOutputIndexGaps(t *testing.T) {
 	chunks := [][]byte{
 		[]byte(`data: {"type":"message_start","message":{"id":"msg_123","usage":{"input_tokens":1,"output_tokens":0}}}`),
 		[]byte(`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`),
@@ -465,53 +465,35 @@ func TestConvertClaudeResponseToOpenAIResponses_HiddenServerToolsDoNotCreateOutp
 
 	messageAddedCount := 0
 	messageDoneCount := 0
-	var outputTextDone gjson.Result
 	var completed gjson.Result
 	for _, output := range outputs {
 		event, data := parseClaudeResponsesSSEEvent(t, output)
 		switch {
 		case event == "response.output_item.added" && data.Get("item.type").String() == "message":
 			messageAddedCount++
-			if got := data.Get("output_index").Int(); got != 0 {
-				t.Fatalf("message added output_index = %d, want 0", got)
-			}
 		case event == "response.output_item.done" && data.Get("item.type").String() == "message":
 			messageDoneCount++
-			if got := data.Get("output_index").Int(); got != 0 {
-				t.Fatalf("message done output_index = %d, want 0", got)
-			}
-		case strings.HasPrefix(event, "response.output_text.") || strings.HasPrefix(event, "response.content_part."):
-			if got := data.Get("output_index").Int(); got != 0 {
-				t.Fatalf("%s output_index = %d, want 0", event, got)
-			}
-			if event == "response.output_text.done" {
-				outputTextDone = data
-			}
 		case event == "response.output_item.added" && data.Get("item.type").String() == "function_call",
 			event == "response.output_item.done" && data.Get("item.type").String() == "function_call",
 			strings.HasPrefix(event, "response.function_call_arguments."):
-			if got := data.Get("output_index").Int(); got != 1 {
-				t.Fatalf("%s output_index = %d, want 1", event, got)
+			if got := data.Get("output_index").Int(); got != 3 {
+				t.Fatalf("%s output_index = %d, want 3", event, got)
 			}
 		case event == "response.completed":
 			completed = data
 		}
 	}
 
-	if messageAddedCount != 1 || messageDoneCount != 1 {
-		t.Fatalf("message lifecycle counts: added=%d done=%d, want 1 each", messageAddedCount, messageDoneCount)
+	if messageAddedCount != 2 || messageDoneCount != 2 {
+		t.Fatalf("message lifecycle counts: added=%d done=%d, want 2 each", messageAddedCount, messageDoneCount)
 	}
-	if got := outputTextDone.Get("text").String(); got != "Searching. Found it." {
-		t.Fatalf("aggregated message text = %q, want %q", got, "Searching. Found it.")
+	if got := completed.Get("response.output.#").Int(); got != 4 {
+		t.Fatalf("completed output count = %d, want 4", got)
 	}
-	if got := completed.Get("response.output.#").Int(); got != 2 {
-		t.Fatalf("completed output count = %d, want 2", got)
-	}
-	if got := completed.Get("response.output.0.type").String(); got != "message" {
-		t.Fatalf("completed output[0].type = %q, want message", got)
-	}
-	if got := completed.Get("response.output.1.type").String(); got != "function_call" {
-		t.Fatalf("completed output[1].type = %q, want function_call", got)
+	for index, wantType := range []string{"message", "web_search_call", "message", "function_call"} {
+		if got := completed.Get(fmt.Sprintf("response.output.%d.type", index)).String(); got != wantType {
+			t.Fatalf("completed output[%d].type = %q, want %q", index, got, wantType)
+		}
 	}
 }
 
@@ -877,14 +859,16 @@ func TestConvertClaudeResponseToOpenAIResponsesNonStream_ReportsCacheTokens(t *t
 	}
 }
 
-func TestConvertClaudeResponseToOpenAIResponses_RestoresAdditionalCustomToolCall(t *testing.T) {
+func TestConvertClaudeResponseToOpenAIResponses_RestoresAdditionalNamespaceCustomToolCall(t *testing.T) {
 	originalRequest := []byte(`{
 		"model":"gpt-test",
-		"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"custom","name":"exec"}]}]
+		"input":[{"type":"additional_tools","role":"developer","tools":[
+			{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}
+		]}]
 	}`)
 	chunks := [][]byte{
 		[]byte(`data: {"type":"message_start","message":{"id":"msg_custom","usage":{"input_tokens":1,"output_tokens":0}}}`),
-		[]byte(`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_custom","name":"exec","input":{}}}`),
+		[]byte(`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_custom","name":"functions__exec","input":{}}}`),
 		[]byte(`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"input\":\"pwd\"}"}}`),
 		[]byte(`data: {"type":"content_block_stop","index":0}`),
 		[]byte(`data: {"type":"message_stop"}`),
@@ -921,8 +905,20 @@ func TestConvertClaudeResponseToOpenAIResponses_RestoresAdditionalCustomToolCall
 	if functionEvents != 0 {
 		t.Fatalf("function call events = %d, want 0", functionEvents)
 	}
-	if got := added.Get("item.name").String(); got != "exec" {
-		t.Fatalf("added name = %q, want exec", got)
+	for _, test := range []struct {
+		label string
+		item  gjson.Result
+	}{
+		{label: "added", item: added.Get("item")},
+		{label: "done", item: done.Get("item")},
+		{label: "completed", item: completed.Get("response.output.0")},
+	} {
+		if got := test.item.Get("name").String(); got != "exec" {
+			t.Fatalf("%s name = %q, want exec", test.label, got)
+		}
+		if got := test.item.Get("namespace").String(); got != "functions" {
+			t.Fatalf("%s namespace = %q, want functions", test.label, got)
+		}
 	}
 	if got := inputDone.Get("input").String(); got != "pwd" {
 		t.Fatalf("custom input.done input = %q, want pwd", got)
@@ -970,6 +966,13 @@ func TestConvertClaudeResponseToOpenAIResponses_DirectCustomWinsNamespaceCollisi
 	if got := streamCompleted.Get("response.output.0.input").String(); got != "pwd" {
 		t.Fatalf("stream output input = %q, want pwd", got)
 	}
+	item := streamCompleted.Get("response.output.0")
+	if got := item.Get("name").String(); got != "n__x" {
+		t.Fatalf("name = %q, want n__x", got)
+	}
+	if item.Get("namespace").Exists() {
+		t.Fatalf("unexpected namespace: %s", item.Get("namespace").Raw)
+	}
 
 	nonStreamRaw := []byte(strings.Join([]string{
 		`data: {"type":"message_start","message":{"id":"msg_collision_nonstream","usage":{"input_tokens":1,"output_tokens":0}}}`,
@@ -985,16 +988,25 @@ func TestConvertClaudeResponseToOpenAIResponses_DirectCustomWinsNamespaceCollisi
 	if got := nonStream.Get("output.0.input").String(); got != "pwd" {
 		t.Fatalf("non-stream output input = %q, want pwd", got)
 	}
+	item = nonStream.Get("output.0")
+	if got := item.Get("name").String(); got != "n__x" {
+		t.Fatalf("name = %q, want n__x", got)
+	}
+	if item.Get("namespace").Exists() {
+		t.Fatalf("unexpected namespace: %s", item.Get("namespace").Raw)
+	}
 }
 
-func TestConvertClaudeResponseToOpenAIResponsesNonStream_RestoresAdditionalCustomToolCall(t *testing.T) {
+func TestConvertClaudeResponseToOpenAIResponsesNonStream_RestoresAdditionalNamespaceCustomToolCall(t *testing.T) {
 	originalRequest := []byte(`{
 		"model":"gpt-test",
-		"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"custom","name":"exec"}]}]
+		"input":[{"type":"additional_tools","role":"developer","tools":[
+			{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}
+		]}]
 	}`)
 	raw := []byte(strings.Join([]string{
 		`data: {"type":"message_start","message":{"id":"msg_custom_nonstream","usage":{"input_tokens":1,"output_tokens":0}}}`,
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_custom_nonstream","name":"exec","input":{}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_custom_nonstream","name":"functions__exec","input":{}}}`,
 		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"input\":\"pwd\"}"}}`,
 		`data: {"type":"content_block_stop","index":0}`,
 		`data: {"type":"message_stop"}`,
@@ -1009,6 +1021,12 @@ func TestConvertClaudeResponseToOpenAIResponsesNonStream_RestoresAdditionalCusto
 	}
 	if got := root.Get("output.0.call_id").String(); got != "call_custom_nonstream" {
 		t.Fatalf("non-stream call_id = %q, want call_custom_nonstream", got)
+	}
+	if got := root.Get("output.0.name").String(); got != "exec" {
+		t.Fatalf("non-stream name = %q, want exec; output=%s", got, root.Raw)
+	}
+	if got := root.Get("output.0.namespace").String(); got != "functions" {
+		t.Fatalf("non-stream namespace = %q, want functions; output=%s", got, root.Raw)
 	}
 }
 

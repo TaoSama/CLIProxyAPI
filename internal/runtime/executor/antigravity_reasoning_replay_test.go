@@ -110,7 +110,7 @@ func TestPrepareAntigravityGeminiReasoningReplayPayloadKeepsCacheForClientMalfor
 	payload := []byte(`{"sessionId":"client-malformed-history","request":{"contents":[{"role":"model","parts":[{"text":"answer"}]},{"role":"model","parts":[{"functionResponse":{"id":"orphan","name":"run","response":{"result":"bad"}}}]}]}}`)
 	kind, fingerprint := antigravityReplayPartFingerprint(gjson.Parse(`{"text":"answer"}`))
 	item := buildAntigravityThoughtSignatureItem(0, 0, "valid-cache-signature-123456789", kind, fingerprint)
-	item = antigravitySetReplayItemContextHash(item, payload, 0)
+	item = antigravityReplayItemContextHashForTest(item, payload, 0)
 	if !internalcache.CacheAntigravityReasoningReplayItems(model, sessionKey, [][]byte{item}) {
 		t.Fatal("cache write failed")
 	}
@@ -832,7 +832,7 @@ func TestPrepareAntigravityGeminiReasoningReplayReplacesIDLessFunctionCallBypass
 func TestAntigravityReasoningReplayContextFingerprintCanonicalizesJSON(t *testing.T) {
 	payload1 := []byte(`{"request":{"tools":[{"functionDeclarations":[{"name":"run","parameters":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"number"}}}}]}],"contents":[{"role":"user","parts":[{"text":"turn"}]},{"role":"model","parts":[{"functionCall":{"name":"run","args":{"a":"x","b":2}}}]}]}}`)
 	payload2 := []byte(`{"request":{"tools":[{"functionDeclarations":[{"parameters":{"properties":{"b":{"type":"number"},"a":{"type":"string"}},"type":"object"},"name":"run"}]}],"contents":[{"parts":[{"text":"turn"}],"role":"user"},{"parts":[{"functionCall":{"args":{"b":2,"a":"x"},"name":"run"}}],"role":"model"}]}}`)
-	if got1, got2 := antigravityReplayContextFingerprint(payload1, 2), antigravityReplayContextFingerprint(payload2, 2); got1 == "" || got1 != got2 {
+	if got1, got2 := newAntigravityReplayRequestIndex(payload1).contextFingerprint(2), newAntigravityReplayRequestIndex(payload2).contextFingerprint(2); got1 == "" || got1 != got2 {
 		t.Fatalf("canonical context hashes differ: %q vs %q", got1, got2)
 	}
 	key1 := antigravityFunctionCallKey("run", `{"a":"x","b":2}`, "")
@@ -980,7 +980,7 @@ func TestAntigravityReasoningReplayPreservesRepeatedIDLessCallsAcrossSplitSSEPar
 func TestAntigravityReasoningReplayLegacyAmbiguousIDLessCallFailsClosed(t *testing.T) {
 	item := []byte(`{"type":"function_call_part","contentIndex":1,"partIndex":1,"name":"run_command","args":{"command":"same"},"thoughtSignature":"legacy-ambiguous-signature-123456"}`)
 	payload := []byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"run"}]},{"role":"model","parts":[{"functionCall":{"name":"run_command","args":{"command":"same"}}},{"functionCall":{"name":"run_command","args":{"command":"same"}}}]}]}}`)
-	out, changed := insertAntigravityReasoningReplayItems(payload, [][]byte{item})
+	out, changed := insertAntigravityReasoningReplayItemsWithSchemas(newAntigravityReplayRequestIndex(payload), payload, [][]byte{item}, nil)
 	if changed || strings.Contains(string(out), "legacy-ambiguous-signature") {
 		t.Fatalf("legacy ambiguous ID-less replay must fail closed: changed=%v body=%s", changed, out)
 	}
@@ -1047,7 +1047,7 @@ func TestPrepareAntigravityGeminiReasoningReplayKeepsTextSignatureOnContextDrift
 	kind, fingerprint := antigravityReplayPartFingerprint(gjson.Parse(`{"text":"same answer"}`))
 	item := buildAntigravityThoughtSignatureItem(1, 0, "fingerprinted-signature-123456", kind, fingerprint)
 	originalPayload := []byte(`{"sessionId":"rebuilt","request":{"contents":[{"role":"user","parts":[{"text":"old context"}]},{"role":"model","parts":[{"text":"same answer"}]},{"role":"user","parts":[{"text":"old next"}]}]}}`)
-	item = antigravitySetReplayItemContextHash(item, originalPayload, 1)
+	item = antigravityReplayItemContextHashForTest(item, originalPayload, 1)
 	internalcache.CacheAntigravityReasoningReplayItems("gemini-3.6-flash-high", "session:rebuilt", [][]byte{item})
 
 	payload := []byte(`{"sessionId":"rebuilt","request":{"contents":[{"role":"user","parts":[{"text":"new context"}]},{"role":"model","parts":[{"text":"same answer"}]},{"role":"user","parts":[{"text":"next"}]}]}}`)
@@ -1265,13 +1265,6 @@ func TestAntigravityReplayToolCallKeysUsesNativeFunctionCallID(t *testing.T) {
 	keys2 := antigravityReplayToolCallKeysFromPart(fc2)
 	if keys[0] == keys2[0] {
 		t.Fatalf("parallel tool calls should not share replay key: %v vs %v", keys, keys2)
-	}
-}
-
-func TestAntigravityRequestHasMatchingFunctionResponseWhitespaceCallID(t *testing.T) {
-	item := gjson.Parse(`{"call_id":" "}`)
-	if !antigravityRequestHasMatchingFunctionResponse(nil, item) {
-		t.Fatal("whitespace-only call_id should be treated as empty => true")
 	}
 }
 
@@ -1559,7 +1552,7 @@ func TestPrepareAntigravityGeminiReasoningReplayRestoresParallelClaudeToolProven
 	const args2 = `{"file_path":"/tmp/b"}`
 	clientID1 := util.GeminiClaudeToolUseID("native-read-1", "Read", args1)
 	clientID2 := util.GeminiClaudeToolUseID("native-read-2", "Read", args2)
-	payload := []byte(`{"sessionId":"sess-parallel-provenance","request":{"contents":[{"role":"model","parts":[{"thoughtSignature":"skip_thought_signature_validator","functionCall":{"id":"` + clientID1 + `","name":"Read","args":{"file_path":"/tmp/a","offset":0}}},{"functionCall":{"id":"` + clientID2 + `","name":"Read","args":{"file_path":"/tmp/b","offset":0}}}]},{"role":"user","parts":[{"functionResponse":{"id":"` + clientID2 + `","name":"Read","response":{"result":"b"}}},{"functionResponse":{"id":"` + clientID1 + `","name":"Read","response":{"result":"a"}}}]}]}}`)
+	payload := []byte(`{"sessionId":"sess-parallel-provenance","request":{"contents":[{"role":"model","parts":[{"thoughtSignature":"skip_thought_signature_validator","functionCall":{"id":"` + clientID1 + `","name":"Read","args":{"file_path":"/tmp/a","offset":0}}},{"functionCall":{"id":"` + clientID2 + `","name":"Read","args":{"file_path":"/tmp/b","offset":0}}}]},{"role":"user","parts":[{"text":"results follow"},{"functionResponse":{"id":"` + clientID2 + `","name":"Read","response":{"result":"b"}}},{"functionResponse":{"id":"` + clientID1 + `","name":"Read","response":{"result":"a"}}},{"text":"continue"}]}]}}`)
 	items := [][]byte{
 		[]byte(`{"type":"function_call_part","contentIndex":0,"partIndex":0,"targetOccurrence":0,"name":"Read","call_id":"native-read-1","args":` + args1 + `,"thoughtSignature":"EsMTCsATARFNMg/XNVix5lDpkKaHR7Xg"}`),
 		[]byte(`{"type":"function_call_part","contentIndex":0,"partIndex":1,"targetOccurrence":0,"name":"Read","call_id":"native-read-2","args":` + args2 + `}`),
@@ -1583,8 +1576,14 @@ func TestPrepareAntigravityGeminiReasoningReplayRestoresParallelClaudeToolProven
 		t.Fatalf("signed/unsigned parallel provenance changed: %s", gjson.GetBytes(out, "request.contents.0").Raw)
 	}
 	responses := gjson.GetBytes(out, "request.contents.1.parts").Array()
-	if len(responses) != 2 || responses[0].Get("functionResponse.id").String() != "native-read-1" || responses[1].Get("functionResponse.id").String() != "native-read-2" {
+	if len(responses) != 4 || responses[0].Get("functionResponse.id").String() != "native-read-1" || responses[1].Get("functionResponse.id").String() != "native-read-2" {
 		t.Fatalf("parallel responses were not normalized to native order: %s", gjson.GetBytes(out, "request.contents.1").Raw)
+	}
+	if responses[2].Get("text").String() != "results follow" || responses[3].Get("text").String() != "continue" {
+		t.Fatalf("mixed user parts were not retained after parallel responses: %s", gjson.GetBytes(out, "request.contents.1").Raw)
+	}
+	if got := gjson.GetBytes(out, "request.contents.1.role").String(); got != "user" {
+		t.Fatalf("mixed response role = %q, want user; output=%s", got, out)
 	}
 	if errPairing := internalsignature.ValidateGeminiFunctionCallPairing(out); errPairing != nil {
 		t.Fatalf("parallel restored history is invalid: %v", errPairing)
