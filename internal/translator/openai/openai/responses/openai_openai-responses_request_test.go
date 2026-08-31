@@ -63,6 +63,48 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFu
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_OrphanedToolOutputsBecomeUserMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		itemType string
+		callID   string
+		output   string
+	}{
+		{name: "function output without call ID", itemType: "function_call_output", output: "delegated input"},
+		{name: "function output with empty call ID", itemType: "function_call_output", callID: "   ", output: "delegated input"},
+		{name: "function output with unmatched call ID", itemType: "function_call_output", callID: "missing", output: "delegated input"},
+		{name: "custom output without call ID", itemType: "custom_tool_call_output", output: "custom delegated input"},
+		{name: "custom output with empty call ID", itemType: "custom_tool_call_output", callID: "   ", output: "custom delegated input"},
+		{name: "custom output with unmatched call ID", itemType: "custom_tool_call_output", callID: "missing", output: "custom delegated input"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := map[string]string{"type": tt.itemType, "output": tt.output}
+			if tt.callID != "" {
+				item["call_id"] = tt.callID
+			}
+			itemJSON, err := json.Marshal(item)
+			if err != nil {
+				t.Fatalf("marshal item: %v", err)
+			}
+			raw := []byte(fmt.Sprintf(`{"input":[%s]}`, itemJSON))
+
+			out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("test-model", raw, false)
+			message := gjson.GetBytes(out, "messages.0")
+			if got := message.Get("role").String(); got != "user" {
+				t.Fatalf("role = %q, want user; output=%s", got, out)
+			}
+			if got := message.Get("content").String(); got != tt.output {
+				t.Fatalf("content = %q, want %q; output=%s", got, tt.output, out)
+			}
+			if message.Get("tool_call_id").Exists() {
+				t.Fatalf("orphaned output must not include tool_call_id; output=%s", out)
+			}
+		})
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_SplitFunctionCallsWhenInterrupted(t *testing.T) {
 	raw := []byte(`{
 		"input": [

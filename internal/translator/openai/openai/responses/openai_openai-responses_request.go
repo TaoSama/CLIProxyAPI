@@ -67,9 +67,16 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	// Convert input array to messages
 	if input := root.Get("input"); input.Exists() && input.IsArray() {
 		inputItems := input.Array()
+		inputCallIDs := make(map[string]struct{})
 		outputCallIDs := make(map[string]struct{})
 		for _, item := range inputItems {
 			itemType := item.Get("type").String()
+			if itemType == "function_call" || itemType == "custom_tool_call" {
+				if callID := strings.TrimSpace(item.Get("call_id").String()); callID != "" {
+					inputCallIDs[callID] = struct{}{}
+				}
+				continue
+			}
 			if itemType != "function_call_output" && itemType != "custom_tool_call_output" {
 				continue
 			}
@@ -259,14 +266,19 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 
 			case "function_call_output":
 				mergeableAssistantIndex = -1
-				// Handle function call output conversion to tool message
-				toolMessage := []byte(`{"role":"tool","tool_call_id":"","content":""}`)
-				callID := ""
-
-				if callId := item.Get("call_id"); callId.Exists() {
-					callID = strings.TrimSpace(callId.String())
-					toolMessage, _ = sjson.SetBytes(toolMessage, "tool_call_id", callID)
+				callID := strings.TrimSpace(item.Get("call_id").String())
+				_, hasMatchingCall := inputCallIDs[callID]
+				if callID == "" || !hasMatchingCall {
+					userMessage := []byte(`{"role":"user","content":""}`)
+					if output := item.Get("output"); output.Exists() {
+						userMessage = setFunctionCallOutputContent(userMessage, output)
+					}
+					appendRegularMessage(userMessage)
+					continue
 				}
+
+				toolMessage := []byte(`{"role":"tool","tool_call_id":"","content":""}`)
+				toolMessage, _ = sjson.SetBytes(toolMessage, "tool_call_id", callID)
 
 				if output := item.Get("output"); output.Exists() {
 					toolMessage = setFunctionCallOutputContent(toolMessage, output)
@@ -297,8 +309,18 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 
 			case "custom_tool_call_output":
 				mergeableAssistantIndex = -1
-				toolMessage := []byte(`{"role":"tool","tool_call_id":"","content":""}`)
 				callID := strings.TrimSpace(item.Get("call_id").String())
+				_, hasMatchingCall := inputCallIDs[callID]
+				if callID == "" || !hasMatchingCall {
+					userMessage := []byte(`{"role":"user","content":""}`)
+					if output := item.Get("output"); output.Exists() {
+						userMessage = setCustomToolCallOutputContent(userMessage, output)
+					}
+					appendRegularMessage(userMessage)
+					continue
+				}
+
+				toolMessage := []byte(`{"role":"tool","tool_call_id":"","content":""}`)
 				toolMessage, _ = sjson.SetBytes(toolMessage, "tool_call_id", callID)
 				if output := item.Get("output"); output.Exists() {
 					toolMessage = setCustomToolCallOutputContent(toolMessage, output)
