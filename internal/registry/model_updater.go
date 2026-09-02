@@ -34,6 +34,8 @@ type modelStore struct {
 
 var modelsCatalogStore = &modelStore{}
 
+var embeddedModelsCatalog *staticModelsJSON
+
 var updaterOnce sync.Once
 
 // ModelRefreshCallback is invoked when startup or periodic model refresh detects changes.
@@ -69,6 +71,7 @@ func init() {
 	if err := loadModelsFromBytes(embeddedModelsJSON, "embed"); err != nil {
 		log.Warnf("registry: failed to parse embedded models.json (embedded catalog may be incomplete or invalid; continuing startup and will rely on remote model refresh): %v", err)
 	}
+	embeddedModelsCatalog = getModels()
 }
 
 // StartModelsUpdater starts a background updater that fetches models
@@ -120,6 +123,7 @@ func tryRefreshModels(ctx context.Context, label string) {
 		log.Warnf("%s: fetch failed from all URLs, keeping current data", label)
 		return
 	}
+	preserveEmbeddedFallbackModels(parsed)
 
 	// Detect changes before updating store.
 	changed := detectChangedProviders(oldData, parsed)
@@ -136,6 +140,46 @@ func tryRefreshModels(ctx context.Context, label string) {
 
 	log.Infof("%s completed from %s, changes detected for providers: %v", label, url, changed)
 	notifyModelRefresh(changed)
+}
+
+func preserveEmbeddedFallbackModels(remote *staticModelsJSON) {
+	if remote == nil || embeddedModelsCatalog == nil {
+		return
+	}
+	remote.Antigravity = appendMissingModels(remote.Antigravity, embeddedModelsCatalog.Antigravity)
+}
+
+func appendMissingModels(remote, fallback []*ModelInfo) []*ModelInfo {
+	if len(fallback) == 0 {
+		return remote
+	}
+	seen := make(map[string]struct{}, len(remote))
+	for _, model := range remote {
+		if model == nil {
+			continue
+		}
+		modelID := strings.TrimSpace(model.ID)
+		if modelID == "" {
+			continue
+		}
+		seen[strings.ToLower(modelID)] = struct{}{}
+	}
+	for _, model := range fallback {
+		if model == nil {
+			continue
+		}
+		modelID := strings.TrimSpace(model.ID)
+		if modelID == "" {
+			continue
+		}
+		key := strings.ToLower(modelID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		remote = append(remote, cloneModelInfo(model))
+		seen[key] = struct{}{}
+	}
+	return remote
 }
 
 // fetchModelsFromRemote tries all remote URLs and returns the parsed model catalog
