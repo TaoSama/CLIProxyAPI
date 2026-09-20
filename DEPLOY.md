@@ -94,18 +94,37 @@ ssh devbox 'cp ~/.local/bin/traex-api.bak ~/.local/bin/traex-api && systemctl --
 
 ### 2.1 构建
 
+必须从 `wt-dev` 分支构建，并使用仓库内构建脚本注入版本信息。
+`X-CPA-VERSION` 只写最近的官方 tag（例如 `v7.3.7`），确保 CPA Manager
+Plus 的版本比较仍按官方数字版本判断；`X-CPA-COMMIT` 写入当前 fork 提交短 SHA，
+`X-CPA-BUILD-DATE` 写入 RFC3339 UTC 构建时间，避免管理界面显示 `dev` / `Invalid Date`。
+
 在 devbox 上从源码构建（Linux/amd64 原生，避免交叉编译的 CGO 问题）：
 
 ```bash
-ssh devbox 'cd ~/CLIProxyAPI-verify && go build -o ~/cliproxyapi/cli-proxy-api.new ./cmd/server'
+ssh devbox 'cd ~/Workspaces/CLIProxyAPI && git checkout wt-dev && git pull --ff-only origin wt-dev && ./scripts/build-server.sh -o ~/cliproxyapi/cli-proxy-api.new'
 ```
 
 或本地交叉编译（如果不依赖 cgo 插件）：
 
 ```bash
 cd ~/Workspaces/CLIProxyAPI
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/cli-proxy-api ./cmd/server
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 ./scripts/build-server.sh -o /tmp/cli-proxy-api
 rsync -av /tmp/cli-proxy-api devbox:~/cliproxyapi/cli-proxy-api.new
+```
+
+Mac mini 本机部署同样使用脚本，目标架构为 darwin/arm64：
+
+```bash
+cd ~/Workspaces/CLIProxyAPI
+GOOS=darwin GOARCH=arm64 ./scripts/build-server.sh -o /tmp/cli-proxy-api-darwin-arm64
+rsync -av /tmp/cli-proxy-api-darwin-arm64 macmini-cf:/Users/macmini/Services/cli-proxy-api/cli-proxy-api.new
+```
+
+构建前可单独查看将要写入二进制的元信息：
+
+```bash
+./scripts/build-metadata.sh --summary
 ```
 
 ### 2.2 备份 + 替换

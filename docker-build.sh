@@ -31,9 +31,8 @@ case "$choice" in
     echo "--- Building from Source and Running ---"
 
     # Get Version Information
-    VERSION="$(git describe --tags --always --dirty)"
-    COMMIT="$(git rev-parse --short HEAD)"
-    BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    metadata="$(./scripts/build-metadata.sh --shell)"
+    eval "${metadata}"
 
     echo "Building with the following info:"
     echo "  Version: ${VERSION}"
