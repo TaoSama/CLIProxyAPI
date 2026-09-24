@@ -199,6 +199,34 @@ func TestWithCodexBuiltinsIncludesImage25Models(t *testing.T) {
 	}
 }
 
+func TestCodexOAuthTierModelsIncludeGPT6SolAndLuna(t *testing.T) {
+	for name, models := range map[string][]*ModelInfo{
+		"team": GetCodexTeamModels(),
+		"plus": GetCodexPlusModels(),
+		"pro":  GetCodexProModels(),
+	} {
+		found := make(map[string]*ModelInfo)
+		for _, model := range models {
+			if model != nil {
+				found[model.ID] = model
+			}
+		}
+
+		for _, id := range []string{"gpt-6-sol", "gpt-6-luna"} {
+			model := found[id]
+			if model == nil {
+				t.Fatalf("Codex %s models do not contain %s", name, id)
+			}
+			if model.OwnedBy != "openai" {
+				t.Errorf("Codex %s model %s OwnedBy = %q, want openai", name, id, model.OwnedBy)
+			}
+			if model.NativeCapabilities == nil || model.NativeCapabilities.WebSearch == nil || !*model.NativeCapabilities.WebSearch {
+				t.Errorf("Codex %s model %s web_search capability is not enabled", name, id)
+			}
+		}
+	}
+}
+
 func TestGetDevinModelsFallback(t *testing.T) {
 	devinModels := GetDevinModels()
 	if len(devinModels) == 0 {
