@@ -80,6 +80,7 @@ func preserveEmbeddedFallbackModels(remote *staticModelsJSON) {
 	if remote == nil || embeddedModelsCatalog == nil {
 		return
 	}
+	remote.Claude = appendMissingModels(remote.Claude, embeddedModelsCatalog.Claude)
 	remote.Antigravity = appendMissingModels(remote.Antigravity, embeddedModelsCatalog.Antigravity)
 }
 

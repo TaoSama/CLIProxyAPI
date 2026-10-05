@@ -33,6 +33,25 @@ func TestAppendMissingModelsDoesNotDuplicateRemoteModels(t *testing.T) {
 	}
 }
 
+func TestPreserveEmbeddedFallbackModelsKeepsClaudeModels(t *testing.T) {
+	original := embeddedModelsCatalog
+	t.Cleanup(func() { embeddedModelsCatalog = original })
+	embeddedModelsCatalog = &staticModelsJSON{
+		Claude:      []*ModelInfo{{ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7"}},
+		Antigravity: []*ModelInfo{{ID: "gemini-3.8-flash-high"}},
+	}
+	remote := &staticModelsJSON{Claude: []*ModelInfo{{ID: "claude-opus-5"}}}
+
+	preserveEmbeddedFallbackModels(remote)
+
+	if len(remote.Claude) != 2 || remote.Claude[1].ID != "claude-opus-4-7" {
+		t.Fatalf("Claude fallbacks = %#v, want claude-opus-4-7 appended", remote.Claude)
+	}
+	if len(remote.Antigravity) != 1 || remote.Antigravity[0].ID != "gemini-3.8-flash-high" {
+		t.Fatalf("Antigravity fallbacks = %#v, want gemini-3.8-flash-high", remote.Antigravity)
+	}
+}
+
 func TestDetectChangedProviders_CodexConfigurationUpdate(t *testing.T) {
 	oldData := &staticModelsJSON{
 		CodexFree: []*ModelInfo{{ID: "gpt-6-luna"}},
