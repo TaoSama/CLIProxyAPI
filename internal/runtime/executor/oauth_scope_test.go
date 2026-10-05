@@ -117,3 +117,18 @@ func TestV8ScopedExecutorsPreserveWebsocketStores(t *testing.T) {
 		t.Fatal("scoping changed the registered executors")
 	}
 }
+
+func TestV8ScopedClaudeExecutorsShareToolAliasStore(t *testing.T) {
+	cfg := &config.Config{}
+	claude := NewClaudeExecutor(cfg)
+	boundClaude := claude.ForAPIKey().(*ClaudeExecutor)
+	if boundClaude.oauthToolAliases == nil || boundClaude.oauthToolAliases != claude.oauthToolAliases {
+		t.Fatal("scoped Claude executor did not preserve the tool alias store")
+	}
+
+	kimi := NewKimiExecutor(cfg)
+	boundKimi := kimi.ForAPIKey().(*KimiExecutor)
+	if boundKimi.ClaudeExecutor.oauthToolAliases == nil || boundKimi.ClaudeExecutor.oauthToolAliases != kimi.ClaudeExecutor.oauthToolAliases {
+		t.Fatal("scoped Kimi executor did not preserve the tool alias store")
+	}
+}
