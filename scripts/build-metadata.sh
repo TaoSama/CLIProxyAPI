@@ -33,7 +33,7 @@ cd "$repo_root"
 commit=$(git rev-parse --short=8 HEAD 2>/dev/null || echo none)
 build_date=${CLI_PROXY_BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 
-base_tag=$(git tag --merged HEAD --list 'v[0-9]*' --sort=-version:refname 2>/dev/null | head -n 1)
+base_tag=$(git tag --merged HEAD --list 'v[0-9]*' --sort=-version:refname 2>/dev/null | sed -n '1p')
 if [[ -z "$base_tag" ]]; then
   version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
 else
