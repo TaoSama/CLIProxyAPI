@@ -37,6 +37,12 @@ const toolSearchExecutorGoldenPayload = `{"model":"claude-sonnet-4-5","input":[`
 	`],"stream":false}`
 
 var toolSearchExecutorGoldenCCH = regexp.MustCompile(`cch=[0-9a-f]+;`)
+var toolSearchExecutorGoldenDate = regexp.MustCompile(`Today's date is \d{4}-\d{2}-\d{2}\.`)
+
+func normalizeToolSearchExecutorGolden(body string) string {
+	body = toolSearchExecutorGoldenCCH.ReplaceAllString(body, "cch=0;")
+	return toolSearchExecutorGoldenDate.ReplaceAllString(body, "Today's date is <current-date>.")
+}
 
 // renderToolSearchExecutorGolden captures the upstream bodies the Claude
 // executor sends for toolSearchExecutorGoldenPayload on every request path.
@@ -80,7 +86,7 @@ func renderToolSearchExecutorGolden(t *testing.T) map[string]string {
 			// OAuth cloaking derives metadata.user_id from a random device id,
 			// and the billing header's cch hash covers it.
 			body, _ := sjson.DeleteBytes(upstream.body, "metadata.user_id")
-			golden[authName+"/"+path] = toolSearchExecutorGoldenCCH.ReplaceAllString(string(body), "cch=0;")
+			golden[authName+"/"+path] = normalizeToolSearchExecutorGolden(string(body))
 		}
 	}
 	return golden
@@ -108,8 +114,9 @@ func TestClaudeExecutor_ToolSearchDisabledMatchesDevGolden(t *testing.T) {
 		t.Fatalf("rendered %d bodies, golden has %d", len(got), len(want))
 	}
 	for name, body := range got {
-		if body != want[name] {
-			t.Errorf("%s differs from dev\n got: %s\nwant: %s", name, body, want[name])
+		wantBody := normalizeToolSearchExecutorGolden(want[name])
+		if body != wantBody {
+			t.Errorf("%s differs from dev\n got: %s\nwant: %s", name, body, wantBody)
 		}
 	}
 }
@@ -126,7 +133,7 @@ func TestClaudeExecutor_ToolSearchEnabledDiffersFromDevGolden(t *testing.T) {
 	if errUnmarshal := json.Unmarshal(raw, &want); errUnmarshal != nil {
 		t.Fatalf("decode golden: %v", errUnmarshal)
 	}
-	if got := renderToolSearchExecutorGolden(t); got["official/execute"] == want["official/execute"] {
+	if got := renderToolSearchExecutorGolden(t); got["official/execute"] == normalizeToolSearchExecutorGolden(want["official/execute"]) {
 		t.Fatal("official/execute matches dev with upstream.claude.tool-search on")
 	}
 }
