@@ -97,8 +97,10 @@ func convertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 					out, _ = sjson.DeleteBytes(out, "thinking.budget_tokens")
 					out, _ = sjson.DeleteBytes(out, "output_config.effort")
 				default:
-					if mapped, ok := thinking.MapToClaudeEffort(effort, supportsMax); ok {
-						effort = mapped
+					if !thinking.HasLevel(mi.Thinking.Levels, effort) {
+						if mapped, ok := thinking.MapToClaudeEffort(effort, supportsMax); ok {
+							effort = mapped
+						}
 					}
 					out, _ = sjson.SetBytes(out, "thinking.type", "adaptive")
 					out, _ = sjson.DeleteBytes(out, "thinking.budget_tokens")
@@ -577,6 +579,10 @@ func convertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 			for i, outputItem := range outputs {
 				part := []byte(`{"type":"tool_result","tool_use_id":"","content":""}`)
 				part, _ = sjson.SetBytes(part, "tool_use_id", callID)
+				// Carry unfinished output status into Claude's tool error signal.
+				if strings.EqualFold(strings.TrimSpace(outputItem.Get("status").String()), "incomplete") {
+					part, _ = sjson.SetBytes(part, "is_error", true)
+				}
 				part = applyResponsesToolResultContent(part, outputItem.Get("output"))
 				if i == 0 {
 					toolResult = part
@@ -795,7 +801,7 @@ func isResponsesSystemLevelRole(role string) bool {
 
 // dropUnsupportedClaudeAssistantPrefill removes a trailing assistant message for
 // Claude model families that reject assistant message prefill (e.g., Fable,
-// Opus 5, Sonnet 4.6).
+// Opus 5, Sonnet 4.6, Haiku 5.5).
 func dropUnsupportedClaudeAssistantPrefill(modelName string, messages [][]byte) [][]byte {
 	if !claudeModelRejectsAssistantPrefill(modelName) || len(messages) == 0 {
 		return messages
@@ -872,7 +878,7 @@ func claudeModelRejectsAssistantPrefill(modelName string) bool {
 	if tokens[0] == "fable" {
 		return true
 	}
-	if len(tokens) < 2 || (tokens[0] != "opus" && tokens[0] != "sonnet") {
+	if len(tokens) < 2 || (tokens[0] != "opus" && tokens[0] != "sonnet" && tokens[0] != "haiku") {
 		return false
 	}
 	parseVersion := func(token string) int {
@@ -1056,6 +1062,9 @@ func applyResponsesToolResultContent(toolResult []byte, output gjson.Result) []b
 func mergeResponsesToolResults(existing, additional []byte) []byte {
 	parts := append(responsesToolResultContentBlocks(existing), responsesToolResultContentBlocks(additional)...)
 	merged, _ := sjson.SetRawBytes(existing, "content", common.JoinRawArray(parts))
+	if gjson.GetBytes(additional, "is_error").Bool() {
+		merged, _ = sjson.SetBytes(merged, "is_error", true)
+	}
 	return merged
 }
 
