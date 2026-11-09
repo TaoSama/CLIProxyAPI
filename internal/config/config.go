@@ -57,6 +57,9 @@ type Config struct {
 	// AuthDir is the directory where authentication token files are stored.
 	AuthDir string `yaml:"auth-dir" json:"-"`
 
+	// RouteMetadataLog enables credential-free Claude upstream route metadata logs.
+	RouteMetadataLog bool `yaml:"route-metadata-log" json:"route-metadata-log"`
+
 	// Debug enables or disables debug-level logging and other debug features.
 	Debug bool `yaml:"debug" json:"debug"`
 

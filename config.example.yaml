@@ -1232,6 +1232,9 @@ multimedia:
 # Application logs, request logs, usage aggregation, and profiling.
 observability:
   logs:
+    # Log only explicit session digests and actual Claude upstream hosts (no bodies or credentials).
+    route-metadata-log: false
+
     # Enable debug logging
     debug: false
 

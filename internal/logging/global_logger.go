@@ -52,6 +52,7 @@ type LogFormatter struct{}
 
 // logFieldOrder defines the display order for common log fields.
 var logFieldOrder = []string{
+	"route_schema", "route_phase", "route_request_id", "route_attempt_id", "route_hop", "route_session_ref", "route_session_binding", "route_auth_ref", "route_config_index", "upstream_scheme", "route_operation", "route_status", "route_outcome", "route_build",
 	"provider", "model",
 	"plugin_id", "plugin_name", "source_id",
 	"version", "active_version", "retired_version", "overwritten",
@@ -62,6 +63,21 @@ var logFieldOrder = []string{
 }
 
 var quotedLogFields = map[string]struct{}{
+	"route_schema":          {},
+	"route_phase":           {},
+	"route_request_id":      {},
+	"route_attempt_id":      {},
+	"route_hop":             {},
+	"route_session_ref":     {},
+	"route_session_binding": {},
+	"route_auth_ref":        {},
+	"route_config_index":    {},
+	"upstream_scheme":       {},
+	"route_operation":       {},
+	"route_status":          {},
+	"route_outcome":         {},
+	"route_build":           {},
+
 	"credential":       {},
 	"auth_id":          {},
 	"auth_index":       {},

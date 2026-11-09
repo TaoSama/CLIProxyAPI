@@ -147,6 +147,7 @@ func shouldUseClaudeUpstreamTokenCount(apiKey, baseURL string) bool {
 
 // countTokensUpstream preserves Anthropic's native token-counting contract.
 func (e *ClaudeExecutor) countTokensUpstream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	routeMetadata := helps.NewClaudeRouteMetadata(ctx, e.cfg, auth, opts, req.Payload, e.upstreamRequestLogProvider(), "count_tokens")
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	upstreamModel := e.upstreamModel(baseModel)
 
@@ -296,6 +297,7 @@ func (e *ClaudeExecutor) countTokensUpstream(ctx context.Context, auth *cliproxy
 	})
 
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
+	httpClient = routeMetadata.WrapClient(httpClient)
 	resp, err := doClaudeUpstreamRequest(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
