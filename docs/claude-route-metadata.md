@@ -15,7 +15,13 @@ headers and short request-ID log prefixes remain unchanged.
 
 `route_session_binding=explicit_uuid` requires an explicit Claude session UUID
 from the incoming session header or Claude metadata, with no conflicting header
-or payload UUID and no subagent/parent identity. The session reference is lowercase
+or payload UUID and no subagent/parent identity. Identity envelopes are inspected
+before routing normalization: invalid, empty, duplicate (including case variants),
+parent/fork/agent signals and conflicting values fail closed. The result is also
+checked against the existing session extractor. Only identity envelopes are
+examined; message/tool text never supplies session evidence. Nested identity
+envelopes have a fixed depth bound. Execution parent/compaction/fork metadata also
+prevents a strong binding. The session reference is lowercase
 hex SHA-256 of `cpa:route-session:v1`, a NUL byte, and the lowercase UUID. An owner
 can calculate the same digest offline from a native session UUID. This binds only
 the UUID observed by the gateway; callers that do not send their native UUID

@@ -46,11 +46,15 @@ func TestClaudeRouteMetadataBinding(t *testing.T) {
 		{"payload", "", `{"metadata":{"user_id":"{\"session_id\":\"` + routeTestSession + `\",\"account_uuid\":\"secret-account\"}"}}`, "explicit_uuid"},
 		{"conflict", routeTestRequest, `{"metadata":{"user_id":"{\"session_id\":\"` + routeTestSession + `\"}"}}`, "ambiguous"},
 		{"invalid", "secret-id", `{}`, "ambiguous"},
-		{"derived", "", `{"session_id":"derived:secret-id"}`, "unavailable"},
+		{"derived", "", `{"session_id":"derived:secret-id"}`, "ambiguous"},
 		{"subagent", routeTestSession, `{"metadata":{"user_id":"{\"session_id\":\"` + routeTestSession + `\",\"agent_id\":\"secret-agent\"}"}}`, "ambiguous"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ref, binding := explicitRouteSession(http.Header{"X-Claude-Code-Session-Id": []string{tc.header}}, []byte(tc.body))
+			headers := make(http.Header)
+			if tc.header != "" {
+				headers.Set("X-Claude-Code-Session-Id", tc.header)
+			}
+			ref, binding := explicitRouteSession(headers, []byte(tc.body))
 			if binding != tc.binding {
 				t.Fatalf("binding %s", binding)
 			}

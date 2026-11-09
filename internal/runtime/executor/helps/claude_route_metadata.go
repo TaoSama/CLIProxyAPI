@@ -17,7 +17,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
-	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -30,46 +29,6 @@ type ClaudeRouteMetadata struct {
 func routeDigest(domain, value string) string {
 	sum := sha256.Sum256([]byte(domain + "\x00" + value))
 	return hex.EncodeToString(sum[:])
-}
-
-func explicitRouteSession(headers http.Header, payload []byte) (string, string) {
-	body, parent, agent := session.ClaudeMetadataIdentities(payload)
-	candidates := []string{body}
-	for key, values := range headers {
-		if strings.EqualFold(key, "X-Claude-Code-Agent-Id") {
-			for _, value := range values {
-				if value != "" {
-					return "", "ambiguous"
-				}
-			}
-		}
-		if strings.EqualFold(key, "X-Claude-Code-Session-Id") {
-			candidates = append(candidates, values...)
-		}
-	}
-	if parent != "" || agent != "" || headers.Get("X-Claude-Code-Agent-Id") != "" {
-		return "", "ambiguous"
-	}
-	var selected string
-	for _, raw := range candidates {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		parsed, errParse := uuid.Parse(raw)
-		if errParse != nil || len(raw) != 36 {
-			return "", "ambiguous"
-		}
-		normalized := parsed.String()
-		if selected != "" && normalized != selected {
-			return "", "ambiguous"
-		}
-		selected = normalized
-	}
-	if selected == "" {
-		return "", "unavailable"
-	}
-	return routeDigest("cpa:route-session:v1", selected), "explicit_uuid"
 }
 
 // NewClaudeRouteMetadata projects existing request state before any outgoing identity rewriting.
@@ -96,6 +55,21 @@ func NewClaudeRouteMetadata(ctx context.Context, cfg *config.Config, auth *clipr
 		payload = opts.OriginalRequest
 	}
 	ref, binding := explicitRouteSession(http.Header(opts.Headers), payload)
+	if _, parentPresent := opts.Metadata[cliproxyexecutor.ParentSessionIDMetadataKey]; parentPresent {
+		ref, binding = "", "ambiguous"
+	}
+	if value, present := opts.Metadata[cliproxyexecutor.IsCompactionMetadataKey]; present {
+		flag, valid := value.(bool)
+		if !valid || flag {
+			ref, binding = "", "ambiguous"
+		}
+	}
+	if value, present := opts.Metadata[cliproxyexecutor.NodeKindMetadataKey]; present {
+		kind, valid := value.(string)
+		if !valid || kind != "trunk" {
+			ref, binding = "", "ambiguous"
+		}
+	}
 	fields := log.Fields{"request_id": requestID.String(), "route_schema": 1, "route_request_id": requestID.String(), "route_attempt_id": attemptID.String(), "route_session_binding": binding, "provider": provider, "route_operation": operation}
 	if ref != "" {
 		fields["route_session_ref"] = ref
