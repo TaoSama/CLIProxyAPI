@@ -6,8 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // StabilizeCodexLeadingDeveloperPrefix makes the leading run of developer/system
@@ -38,13 +37,26 @@ import (
 // not cross-reference message item ids from other items, so rewriting them is
 // safe for upstream item association.
 func StabilizeCodexLeadingDeveloperPrefix(body []byte) []byte {
-	input := gjson.GetBytes(body, "input")
-	if !input.IsArray() {
+	doc := ojson.NewDoc(body)
+	if !StabilizeCodexLeadingDeveloperPrefixDoc(doc) {
 		return body
+	}
+	return doc.Bytes()
+}
+
+// StabilizeCodexLeadingDeveloperPrefixDoc stabilizes the leading developer/system
+// run in place before user payload rules are applied.
+func StabilizeCodexLeadingDeveloperPrefixDoc(doc *ojson.Doc) bool {
+	if doc == nil {
+		return false
+	}
+	input := doc.Get("input")
+	if !input.IsArray() {
+		return false
 	}
 	items := input.Array()
 	if len(items) < 2 {
-		return body
+		return false
 	}
 
 	// Identify the contiguous leading run of developer/system message items.
@@ -63,7 +75,7 @@ func StabilizeCodexLeadingDeveloperPrefix(body []byte) []byte {
 	if runEnd < 2 {
 		// Nothing to reorder; still normalize a lone leading block's id below.
 		if runEnd == 0 {
-			return body
+			return false
 		}
 	}
 
@@ -93,11 +105,11 @@ func StabilizeCodexLeadingDeveloperPrefix(body []byte) []byte {
 		if stable == lead[idx].id {
 			continue
 		}
-		next, err := sjson.SetBytes([]byte(lead[idx].raw), "id", stable)
-		if err != nil {
-			continue
+		itemDoc := ojson.NewDocString(lead[idx].raw)
+		if err := itemDoc.Set("id", stable); err != nil {
+			return false
 		}
-		lead[idx].raw = string(next)
+		lead[idx].raw = itemDoc.String()
 		lead[idx].id = stable
 		changed = true
 	}
@@ -117,7 +129,7 @@ func StabilizeCodexLeadingDeveloperPrefix(body []byte) []byte {
 	}
 
 	if !changed {
-		return body
+		return false
 	}
 
 	rebuilt := make([]string, 0, len(items))
@@ -128,25 +140,24 @@ func StabilizeCodexLeadingDeveloperPrefix(body []byte) []byte {
 		rebuilt = append(rebuilt, items[i].Raw)
 	}
 
-	updated, err := sjson.SetRawBytes(body, "input", []byte("["+strings.Join(rebuilt, ",")+"]"))
-	if err != nil {
-		return body
+	if err := doc.SetRawBytes("input", []byte("["+strings.Join(rebuilt, ",")+"]")); err != nil {
+		return false
 	}
-	return updated
+	return true
 }
 
 // codexMessageContentText concatenates the textual content of a message item so
 // that ordering and identity decisions depend only on the visible payload.
-func codexMessageContentText(item gjson.Result) string {
+func codexMessageContentText(item ojson.Result) string {
 	content := item.Get("content")
-	if content.Type == gjson.String {
+	if content.Type == ojson.String {
 		return content.String()
 	}
 	if !content.IsArray() {
 		return ""
 	}
 	var sb strings.Builder
-	content.ForEach(func(_, part gjson.Result) bool {
+	content.ForEach(func(_, part ojson.Result) bool {
 		if text := part.Get("text"); text.Exists() {
 			sb.WriteString(text.String())
 		}

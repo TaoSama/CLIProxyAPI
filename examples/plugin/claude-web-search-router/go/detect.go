@@ -3,7 +3,7 @@ package main
 import (
 	"strings"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 const (
@@ -32,7 +32,7 @@ func isClaudeTypedWebSearchToolType(toolType string) bool {
 }
 
 func hasClaudeTypedWebSearchTool(body []byte) bool {
-	tools := gjson.GetBytes(body, "tools")
+	tools := ojson.GetBytesNoCopy(body, "tools")
 	if !tools.IsArray() {
 		return false
 	}
@@ -45,7 +45,7 @@ func hasClaudeTypedWebSearchTool(body []byte) bool {
 }
 
 func hasOnlyClaudeTypedWebSearchTools(body []byte) bool {
-	tools := gjson.GetBytes(body, "tools")
+	tools := ojson.GetBytesNoCopy(body, "tools")
 	if !tools.IsArray() {
 		return false
 	}
@@ -67,7 +67,7 @@ func isOpenAIResponsesWebSearchToolType(toolType string) bool {
 }
 
 func isOpenAIResponsesWebSearchRequest(body []byte, requireWebSearchOnly bool) bool {
-	tools := gjson.GetBytes(body, "tools")
+	tools := ojson.GetBytesNoCopy(body, "tools")
 	if !tools.IsArray() {
 		return false
 	}
@@ -96,7 +96,9 @@ func isSupportedWebSearchRequest(source string, body []byte, requireWebSearchOnl
 }
 
 func looksLikeClaudeCodeWebSearchAssistant(body []byte) bool {
-	system := gjson.GetBytes(body, "system")
+	var fieldsBuf [2]ojson.Result
+	fields := ojson.GetManyBytesNoCopy(fieldsBuf[:0], body, "system", "messages")
+	system := fields[0]
 	if system.IsArray() {
 		for _, block := range system.Array() {
 			text := strings.ToLower(block.Get("text").String())
@@ -106,13 +108,13 @@ func looksLikeClaudeCodeWebSearchAssistant(body []byte) bool {
 			}
 		}
 	}
-	if system.Type == gjson.String {
+	if system.Type == ojson.String {
 		text := strings.ToLower(system.String())
 		if strings.Contains(text, "web search tool use") {
 			return true
 		}
 	}
-	messages := gjson.GetBytes(body, "messages")
+	messages := fields[1]
 	if !messages.IsArray() {
 		return false
 	}
@@ -177,13 +179,13 @@ func modelMatchesOnly(upstreamModels []string, requestedModel string, onlyModels
 
 func extractClaudeWebSearchQuery(body []byte) string {
 	if q := extractQueryFromPerformPrefix(body); q != "" {
-		return q
+		return strings.Clone(q)
 	}
-	return extractQueryFromUserMessages(body)
+	return strings.Clone(extractQueryFromUserMessages(body))
 }
 
 func extractQueryFromPerformPrefix(body []byte) string {
-	messages := gjson.GetBytes(body, "messages")
+	messages := ojson.GetBytesNoCopy(body, "messages")
 	if !messages.IsArray() {
 		return ""
 	}
@@ -202,7 +204,7 @@ func extractQueryFromPerformPrefix(body []byte) string {
 }
 
 func extractQueryFromUserMessages(body []byte) string {
-	messages := gjson.GetBytes(body, "messages")
+	messages := ojson.GetBytesNoCopy(body, "messages")
 	if !messages.IsArray() {
 		return ""
 	}
@@ -220,8 +222,8 @@ func extractQueryFromUserMessages(body []byte) string {
 	return ""
 }
 
-func extractClaudeMessageText(content gjson.Result) string {
-	if content.Type == gjson.String {
+func extractClaudeMessageText(content ojson.Result) string {
+	if content.Type == ojson.String {
 		return content.String()
 	}
 	if !content.IsArray() {
@@ -243,7 +245,7 @@ func extractClaudeWebSearchMaxUses(body []byte, defaultMax int) int {
 	if defaultMax <= 0 {
 		defaultMax = 5
 	}
-	tools := gjson.GetBytes(body, "tools")
+	tools := ojson.GetBytesNoCopy(body, "tools")
 	if !tools.IsArray() {
 		return defaultMax
 	}

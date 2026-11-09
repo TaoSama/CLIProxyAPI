@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 func TestConvertOpenAIResponsesRequestToClaude_RepeatedToolOutputsPreserveErrorStatus(t *testing.T) {
@@ -32,7 +32,7 @@ func TestConvertOpenAIResponsesRequestToClaude_RepeatedToolOutputsPreserveErrorS
 				if err != nil {
 					t.Fatalf("convert request: %v", err)
 				}
-				root := gjson.ParseBytes(converted)
+				root := ojson.ParseBytes(converted)
 				blocks := root.Get("messages.1.content").Array()
 				if len(blocks) != 1 || blocks[0].Get("type").String() != "tool_result" {
 					t.Fatalf("expected one merged tool_result, got %s", root.Raw)

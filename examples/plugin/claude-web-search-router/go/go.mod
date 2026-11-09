@@ -3,6 +3,7 @@ module github.com/router-for-me/CLIProxyAPI/v8/examples/plugin/claude-web-search
 go 1.26.10
 
 require (
+	github.com/MoeForge/moego v0.1.0-alpha.1
 	github.com/router-for-me/CLIProxyAPI/v8 v8.0.0
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // buildCodexTurn builds a Codex Responses body from an ordered list of leading
@@ -37,7 +37,7 @@ func buildCodexTurn(t *testing.T, lead []map[string]string, tail []map[string]an
 
 func leadingPrefixJSON(t *testing.T, body []byte, n int) string {
 	t.Helper()
-	items := gjson.GetBytes(body, "input").Array()
+	items := ojson.GetBytes(body, "input").Array()
 	if len(items) < n {
 		t.Fatalf("want at least %d input items, got %d", n, len(items))
 	}
@@ -84,13 +84,13 @@ func TestStabilizeCodexLeadingDeveloperPrefix_OrderAndIDJitter(t *testing.T) {
 	}
 
 	// User item (non developer/system) must be preserved and not reordered in.
-	last1 := gjson.GetBytes(s1, "input.3")
+	last1 := ojson.GetBytes(s1, "input.3")
 	if last1.Get("role").String() != "user" {
 		t.Fatalf("expected user item preserved at tail, got role %q", last1.Get("role").String())
 	}
 	// Ids must be deterministic content-derived, not the original volatile ones.
-	if gjson.GetBytes(s1, "input.0.id").String() == "msg_aaa" {
-		t.Fatalf("expected leading id to be normalized, still volatile: %s", gjson.GetBytes(s1, "input.0.id").String())
+	if ojson.GetBytes(s1, "input.0.id").String() == "msg_aaa" {
+		t.Fatalf("expected leading id to be normalized, still volatile: %s", ojson.GetBytes(s1, "input.0.id").String())
 	}
 }
 
@@ -112,13 +112,13 @@ func TestStabilizeCodexLeadingDeveloperPrefix_PreservesUserOrder(t *testing.T) {
 	})
 	out := StabilizeCodexLeadingDeveloperPrefix(body)
 	// Leading run [0,1] gets sorted (A-block before B-block); user at 2, dev at 3 stay.
-	if gjson.GetBytes(out, "input.0.content.0.text").String() != "A-block" {
-		t.Fatalf("leading run not sorted: %s", gjson.GetBytes(out, "input.0.content.0.text").String())
+	if ojson.GetBytes(out, "input.0.content.0.text").String() != "A-block" {
+		t.Fatalf("leading run not sorted: %s", ojson.GetBytes(out, "input.0.content.0.text").String())
 	}
-	if gjson.GetBytes(out, "input.2.role").String() != "user" {
-		t.Fatalf("user item moved, got role %q", gjson.GetBytes(out, "input.2.role").String())
+	if ojson.GetBytes(out, "input.2.role").String() != "user" {
+		t.Fatalf("user item moved, got role %q", ojson.GetBytes(out, "input.2.role").String())
 	}
-	if gjson.GetBytes(out, "input.3.content.0.text").String() != "post-user developer" {
+	if ojson.GetBytes(out, "input.3.content.0.text").String() != "post-user developer" {
 		t.Fatalf("post-user developer block was reordered")
 	}
 }
