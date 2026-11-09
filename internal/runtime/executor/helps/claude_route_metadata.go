@@ -58,10 +58,12 @@ func NewClaudeRouteMetadata(ctx context.Context, cfg *config.Config, auth *clipr
 	if _, parentPresent := opts.Metadata[cliproxyexecutor.ParentSessionIDMetadataKey]; parentPresent {
 		ref, binding = "", "ambiguous"
 	}
-	if value, present := opts.Metadata[cliproxyexecutor.IsCompactionMetadataKey]; present {
-		flag, valid := value.(bool)
-		if !valid || flag {
-			ref, binding = "", "ambiguous"
+	for _, key := range []string{cliproxyexecutor.IsCompactionMetadataKey, cliproxyexecutor.IsForkMetadataKey} {
+		if value, present := opts.Metadata[key]; present {
+			flag, valid := value.(bool)
+			if !valid || flag {
+				ref, binding = "", "ambiguous"
+			}
 		}
 	}
 	if value, present := opts.Metadata[cliproxyexecutor.NodeKindMetadataKey]; present {

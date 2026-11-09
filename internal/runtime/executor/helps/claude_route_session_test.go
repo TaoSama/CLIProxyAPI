@@ -80,6 +80,9 @@ func TestClaudeRouteMetadataExecutionHierarchy(t *testing.T) {
 		{cliproxyexecutor.ParentSessionIDMetadataKey: ""},
 		{cliproxyexecutor.ParentSessionIDMetadataKey: nil},
 		{cliproxyexecutor.IsCompactionMetadataKey: true},
+		{cliproxyexecutor.IsForkMetadataKey: true},
+		{cliproxyexecutor.IsForkMetadataKey: "true"},
+		{cliproxyexecutor.IsForkMetadataKey: []string{"invalid"}},
 		{cliproxyexecutor.IsCompactionMetadataKey: []string{"invalid"}},
 		{cliproxyexecutor.NodeKindMetadataKey: map[string]string{"invalid": "type"}},
 		{cliproxyexecutor.NodeKindMetadataKey: "fork"},
@@ -91,5 +94,12 @@ func TestClaudeRouteMetadataExecutionHierarchy(t *testing.T) {
 		if _, exists := m.fields["route_session_ref"]; exists {
 			t.Fatal("execution hierarchy emitted session reference")
 		}
+	}
+}
+
+func TestClaudeRouteMetadataFalseHierarchyFlags(t *testing.T) {
+	m := NewClaudeRouteMetadata(logging.WithRequestID(context.Background(), routeTestRequest), &config.Config{RouteMetadataLog: true}, nil, cliproxyexecutor.Options{Headers: http.Header{"X-Claude-Code-Session-Id": []string{routeTestSession}}, Metadata: map[string]any{cliproxyexecutor.IsForkMetadataKey: false, cliproxyexecutor.IsCompactionMetadataKey: false, cliproxyexecutor.NodeKindMetadataKey: "trunk"}}, nil, "claude", "messages")
+	if m.fields["route_session_binding"] != "explicit_uuid" {
+		t.Fatal("false hierarchy flags changed main binding")
 	}
 }
